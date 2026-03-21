@@ -94,11 +94,16 @@ h1 {
   color: #c8d4ee;
 }
 
-.actions {
+.actions,
+.settings-actions,
+.modal-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
   align-items: center;
+}
+
+.actions {
   margin-top: 28px;
 }
 
@@ -124,8 +129,35 @@ h1 {
   opacity: 0.7;
 }
 
-.button-note {
-  color: #9fb1d9;
+.secondary-button,
+.danger-button,
+.modal-close {
+  border: 1px solid rgba(160, 186, 255, 0.22);
+  border-radius: 14px;
+  padding: 14px 20px;
+  color: #edf4ff;
+  background: rgba(80, 103, 148, 0.18);
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 120ms ease, opacity 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.secondary-button:hover:not(:disabled),
+.danger-button:hover:not(:disabled),
+.modal-close:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.danger-button {
+  border-color: rgba(255, 123, 123, 0.24);
+  background: rgba(120, 34, 47, 0.35);
+}
+
+.secondary-button:disabled,
+.danger-button:disabled,
+.modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .panel-grid {
@@ -151,6 +183,7 @@ h1 {
   font-size: 1.05rem;
 }
 
+.settings-card,
 .result-card,
 .instructions-card {
   margin-top: 22px;
@@ -188,25 +221,24 @@ h1 {
   margin-top: 10px;
 }
 
-@media (max-width: 640px) {
-  .app-shell {
-    padding: 28px 16px 40px;
-  }
-
-  .hero-card,
-  .result-card,
-  .instructions-card {
-    padding: 24px;
-  }
-}
-
-
-.settings-card {
-  margin-top: 22px;
-}
-
-.settings-card h2 {
+.settings-card h2,
+.modal-card h2 {
   margin-top: 0;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.settings-helper,
+.field-note {
+  margin: 0;
+  color: #9fb1d9;
+  font-size: 0.92rem;
 }
 
 .settings-grid {
@@ -215,25 +247,113 @@ h1 {
   gap: 18px;
 }
 
-.settings-grid label {
+.settings-field {
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
-select {
+.settings-field--wide {
+  grid-column: 1 / -1;
+}
+
+.settings-grid input,
+.settings-grid select {
+  width: 100%;
+  border: 1px solid rgba(160, 186, 255, 0.18);
   border-radius: 12px;
-  border: 1px solid rgba(122, 162, 255, 0.2);
-  background: rgba(11, 16, 32, 0.95);
-  color: #f4f8ff;
   padding: 12px 14px;
+  color: #f4f8ff;
+  background: rgba(10, 16, 31, 0.82);
 }
 
-.secondary-button {
-  border: 1px solid rgba(122, 162, 255, 0.28);
-  border-radius: 14px;
-  padding: 14px 20px;
-  color: #d9e7ff;
-  background: rgba(79, 140, 255, 0.12);
-  cursor: pointer;
-  font-weight: 600;
+.settings-grid input::placeholder {
+  color: #7f91b9;
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.slider-row input[type="range"] {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.slider-row output {
+  min-width: 56px;
+  text-align: right;
+  font-weight: 700;
+  color: #edf4ff;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 6, 14, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.modal-card {
+  position: relative;
+  width: min(520px, 100%);
+  padding: 28px;
+  border: 1px solid rgba(160, 186, 255, 0.18);
+  border-radius: 24px;
+  background: rgba(12, 19, 39, 0.96);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+}
+
+.modal-card p {
+  margin: 0;
+  color: #c8d4ee;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+.modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 28px 16px 40px;
+  }
+
+  .hero-card,
+  .result-card,
+  .instructions-card,
+  .settings-card {
+    padding: 24px;
+  }
+
+  .settings-header {
+    flex-direction: column;
+  }
+
+  .settings-actions,
+  .modal-actions {
+    width: 100%;
+  }
+
+  .settings-actions button,
+  .modal-actions button {
+    width: 100%;
+  }
 }

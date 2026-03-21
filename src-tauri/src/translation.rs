@@ -1,6 +1,5 @@
-use crate::settings::LANGUAGE_OPTIONS;
+use crate::settings::{resolve_openai_api_key, AppSettings, LANGUAGE_OPTIONS};
 use serde::{Deserialize, Serialize};
-use std::{env, fs};
 
 const DEFAULT_TRANSLATION_MODEL: &str = "gpt-4o-mini";
 
@@ -50,27 +49,6 @@ struct ChatResponseMessage {
     content: String,
 }
 
-fn load_env_file_if_present() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let env_path = manifest_dir.parent().map(|p| p.join(".env"));
-
-    if let Some(path) = env_path {
-        if let Ok(contents) = fs::read_to_string(path) {
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                if let Some((key, value)) = trimmed.split_once('=') {
-                    if env::var_os(key.trim()).is_none() {
-                        env::set_var(key.trim(), value.trim().trim_matches('"').trim_matches('\''));
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn resolve_language(code: Option<String>) -> Result<String, String> {
     let value = code.unwrap_or_default().trim().to_lowercase();
     if LANGUAGE_OPTIONS.iter().any(|item| item.code == value) {
@@ -80,16 +58,16 @@ fn resolve_language(code: Option<String>) -> Result<String, String> {
     }
 }
 
-pub fn translate_text(options: TranslateTextOptions) -> Result<TranslateTextResult, String> {
-    load_env_file_if_present();
-
+pub fn translate_text(
+    options: TranslateTextOptions,
+    settings: &AppSettings,
+) -> Result<TranslateTextResult, String> {
     let text = options.text.unwrap_or_default().trim().to_string();
     if text.is_empty() {
         return Err("No text provided for translation".into());
     }
 
-    let api_key = env::var("OPENAI_API_KEY")
-        .map_err(|_| "OPENAI_API_KEY is missing. Add it to the project's .env file.".to_string())?;
+    let api_key = resolve_openai_api_key(settings)?;
 
     let target_language = resolve_language(options.target_language)?;
     let model = options.model.unwrap_or_else(|| DEFAULT_TRANSLATION_MODEL.to_string());

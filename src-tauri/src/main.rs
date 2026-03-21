@@ -8,10 +8,13 @@ fn app_status() -> &'static str {
 }
 
 fn main() {
+    let settings_state = settings::SettingsState::load_or_create(settings::default_config_path())
+        .expect("failed to initialize persisted settings");
+
     tauri::Builder::default()
         .manage(hotkey::HotkeyState::default())
         .manage(run_controller::RunController::default())
-        .manage(settings::SettingsState::default())
+        .manage(settings_state)
         .setup(|app| {
             hotkey::init_hotkey(&app.handle());
             Ok(())
@@ -26,6 +29,7 @@ fn main() {
             voice_overlay_assistant::capture_and_translate_command,
             voice_overlay_assistant::get_settings,
             voice_overlay_assistant::update_settings,
+            voice_overlay_assistant::reset_settings,
             voice_overlay_assistant::get_language_options,
             voice_overlay_assistant::pause_resume_current_run,
             voice_overlay_assistant::cancel_current_run
