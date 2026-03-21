@@ -31,7 +31,7 @@ pub struct HotkeyStatusPayload {
 }
 
 #[derive(Default)]
-struct HotkeySnapshot {
+pub(crate) struct HotkeySnapshot {
     registered: bool,
     state: &'static str,
     message: String,

@@ -1,23 +1,65 @@
 # Voice Overlay Assistant – MVP+
 
-Windows-first Tauri app for two selection-based flows:
+Windows-first Tauri app for selection-based AI flows with **global run control**.
+
+## Kernidee
+
+Die App arbeitet immer mit einem **zentralen aktiven Run**.
+Ein Run kann z. B. sein:
+
+- Speak
+- Translate + Speak
+- spätere Rewrite-/Explain-/Grammar-Flows
+
+Wichtig dabei:
+- **Pause/Resume und Cancel sind global**
+- sie gelten **nicht nur für einen einzelnen Speak-Flow**, sondern für **jeden aktiven AI-Run**
+- das soll auch für zukünftige Features so bleiben
+
+## Hotkeys
+
 - **Ctrl+Shift+Space** → capture marked text and speak it
-- **Ctrl+Shift+T** → capture marked text and translate it
+- **Ctrl+Shift+T** → capture marked text, translate it, and speak the translation
+- **Ctrl+Shift+P** → Pause / Resume des aktuell laufenden Runs
+- **Ctrl+Shift+X** → Cancel / Abbruch des aktuell laufenden Runs
+
+## Globale Run-Control-Regel
+
+**Produktregel:**
+Jeder aktive AI-Workflow muss an den zentralen Run-Controller angeschlossen sein.
+
+Das gilt für aktuelle und zukünftige Features:
+- Speak
+- Translate
+- Rewrite
+- Explain
+- Grammar fix
+- Streaming-/Live-Modi
+- weitere AI-Aktionen
+
+Das Ziel ist:
+- ein aktiver Run muss immer global pausierbar sein
+- ein aktiver Run muss immer global abbrechbar sein
+- Audio-Playback darf nie ein Sonderfall außerhalb dieser globalen Steuerung sein
 
 ## Was jetzt drin ist
 
 - globaler Speak-Hotkey: `Ctrl+Shift+Space`
 - globaler Translate-Hotkey: `Ctrl+Shift+T`
+- globaler Pause/Resume-Hotkey: `Ctrl+Shift+P`
+- globaler Cancel-Hotkey: `Ctrl+Shift+X`
 - Selection Capture per Hintergrund-`Ctrl+C`
 - Clipboard-Restore nach Möglichkeit
 - OpenAI TTS mit satzweisem Chunking
-- Standard-Audioformat jetzt **WAV**
-- konfigurierbarer **Startpuffer nur für den ersten Chunk** (Default: `180 ms`), damit der Audio-Start weniger abgeschnitten wirkt
-- Translation-MVP mit UI-Output und konfigurierbarer Zielsprache
+- eingebetteter Rust-Audioplayer über `rodio`
+- Standard-Audioformat: **WAV**
+- konfigurierbarer Startpuffer für den ersten Chunk
+- Translation mit konfigurierbarer Zielsprache
 - Settings in der UI für:
   - Audioformat (`WAV` / `MP3`)
   - erster Chunk Startpuffer
   - Zielsprache für Übersetzung
+- Timing-/Chunk-Logging für Debugging
 
 ## Bedienung
 
@@ -25,33 +67,46 @@ Windows-first Tauri app for two selection-based flows:
 2. In einer anderen Windows-App Text markieren.
 3. Einen Hotkey drücken:
    - `Ctrl+Shift+Space` → Vorlesen
-   - `Ctrl+Shift+T` → Übersetzen
-4. Translation-Ergebnisse erscheinen aktuell in der UI. Das ist absichtlich die MVP-Basis für späteres Vorlesen, Einfügen oder Copy-Back.
+   - `Ctrl+Shift+T` → Übersetzen + Vorlesen
+4. Während ein Run aktiv ist:
+   - `Ctrl+Shift+P` → Pause / Resume
+   - `Ctrl+Shift+X` → Cancel
 
-## Audio / WAV-Änderung
+## Audio / Playback
 
 Der Default bleibt **WAV**. Das Playback läuft jetzt **direkt in Rust über einen eingebetteten App-Player** statt über PowerShell / Windows-Player:
+
 - Playback der TTS-Chunks erfolgt app-intern über `rodio`
 - WAV von OpenAI wird nicht mehr an `SoundPlayer`, MCI oder WMPlayer delegiert
 - Chunks werden weiterhin parallel erzeugt, aber **geordnet und sequentiell** abgespielt
-- der optionale Startpuffer für den ersten Chunk wird jetzt **beim Playback** eingefügt statt die WAV-Datei umzuschreiben
-- MP3 bleibt als Option in den Settings erhalten, Hauptpfad ist aber jetzt robuster für WAV
+- der optionale Startpuffer für den ersten Chunk wird beim Playback eingefügt
+- MP3 bleibt als Option in den Settings erhalten
 
 Praktische Einschätzung:
 - Das vermeidet Unterschiede je nach installiertem Windows-Playback-Pfad.
 - Für den aktuellen Stand ist ein kleiner eingebetteter Player robuster als Datei-für-Datei-Playback über OS-Skripte.
 
-## Translation-MVP
+## Pause / Resume / Cancel – aktueller Stand
 
-Aktuell bewusst schlicht:
+Aktuell gilt:
+- **Pause/Resume** wirkt direkt auf die laufende Wiedergabe
+- **Cancel** stoppt aktuelles Audio sofort und verhindert weiteres Abspielen der restlichen Queue
+- laufende HTTP-Requests werden aktuell nicht hart netzwerkseitig abgebrochen, aber ihre Ergebnisse werden nach Rückkehr ignoriert, wenn der Run bereits gecancelt wurde
+
+Das ist absichtlich als robuster MVP umgesetzt und bildet die Grundlage für alle späteren AI-Flows.
+
+## Translation
+
+Aktuell:
 - markierten Text capturen
 - an OpenAI zur Übersetzung schicken
-- Ergebnis in der App anzeigen
+- Übersetzung direkt sprechen
+- Ergebnis zusätzlich in der App sichtbar halten
 
-Das ist architektonisch schon so angelegt, dass später leicht erweitert werden kann auf:
-- Übersetzung direkt vorlesen
-- Übersetzung automatisch einfügen
-- Copy-to-clipboard / paste-back Flow
+Die Architektur ist so angelegt, dass später leicht erweitert werden kann auf:
+- Copy-to-clipboard
+- paste-back / auto replace
+- alternative Ausgaben wie Overlay / Rewrite / Explain
 
 ## Realtime / Streaming-Einschätzung
 
@@ -60,7 +115,62 @@ Das ist architektonisch schon so angelegt, dass später leicht erweitert werden 
 - TTS noch schneller starten soll
 - Übersetzung + Vorlesen stärker dialogartig werden
 
-Für dieses MVP war die kleinere und robustere Änderung sinnvoller: bestehende request/response-Pipeline behalten, aber Startverhalten und Hotkeys verbessern.
+Für dieses MVP war die robustere Änderung sinnvoller: bestehende request/response-Pipeline behalten, aber Startverhalten, Playback und globale Hotkeys stabilisieren.
+
+## Lokale Installation auf Windows
+
+### Voraussetzungen
+
+Du brauchst auf deinem PC:
+- **Windows**
+- **Node.js** (inkl. `npm`)
+- **Rust** mit `cargo`
+- die **Tauri prerequisites für Windows**
+- einen **OpenAI API Key**
+
+### Projekt holen
+
+Wenn du das Repo noch nicht lokal hast:
+
+```powershell
+git clone https://github.com/SteveBrzezinski/ai_ovlay_assistant.git
+cd ai_ovlay_assistant
+```
+
+Wenn du schon im Projektordner bist, einfach dort weitermachen.
+
+### Abhängigkeiten installieren
+
+```powershell
+npm install
+```
+
+### `.env` anlegen
+
+Im Projektverzeichnis eine `.env` anlegen:
+
+```env
+OPENAI_API_KEY=your_key_here
+```
+
+Falls noch keine Datei existiert, kannst du z. B. in PowerShell eine neue erzeugen oder `.env.example` als Vorlage nutzen.
+
+### Dev-Modus starten
+
+```powershell
+npm run tauri:dev
+```
+
+Dann:
+1. App offen lassen
+2. in einer anderen Windows-App Text markieren
+3. einen der Hotkeys verwenden
+
+### Production-Build
+
+```powershell
+npm run tauri:build
+```
 
 ## Entwicklung
 
@@ -73,7 +183,8 @@ npm run tauri:dev
 
 ```bash
 npm run build
-npm run tsc -- --noEmit
+npx tsc --noEmit
+cargo check
 ```
 
 > Rust/Tauri-Windows-Teile lassen sich am sinnvollsten auf einem echten Windows-Setup validieren.
