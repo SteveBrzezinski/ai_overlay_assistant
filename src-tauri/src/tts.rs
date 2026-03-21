@@ -1,9 +1,13 @@
-use crate::{run_controller::{is_cancelled_error, RunAccess}, settings::AppSettings};
-use rodio::{Decoder, OutputStream, Sink};
+use crate::{
+    run_controller::{is_cancelled_error, RunAccess},
+    settings::{resolve_openai_api_key, AppSettings},
+};
+use rodio::{buffer::SamplesBuffer, Decoder, OutputStream, Sink, Source};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    env, fs,
+    env,
+    fs,
     io::BufReader,
     path::{Path, PathBuf},
     sync::{
@@ -22,6 +26,9 @@ const DEFAULT_MAX_PARALLEL_REQUESTS: usize = 3;
 const MAX_PARALLEL_REQUESTS_LIMIT: usize = 4;
 const MIN_CHUNK_CHARS: usize = 120;
 const MAX_CHUNK_CHARS: usize = 1_200;
+const TIME_STRETCH_FRAME_SIZE: usize = 2_048;
+const TIME_STRETCH_OVERLAP: usize = 512;
+const TIME_STRETCH_SEARCH: usize = 384;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +113,7 @@ struct ResolvedSpeakOptions {
     max_chunk_chars: usize,
     max_parallel_requests: usize,
     first_chunk_leading_silence_ms: u32,
+    playback_speed: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -385,6 +393,7 @@ where
             expected_chunks,
             options.autoplay,
             options.first_chunk_leading_silence_ms,
+            options.playback_speed,
             progress.clone(),
             run_access.clone(),
         );
@@ -437,6 +446,7 @@ where
         expected_chunks: usize,
         autoplay: bool,
         first_chunk_leading_silence_ms: u32,
+        playback_speed: f32,
         progress: Option<ProgressCallback>,
         run_access: Option<RunAccess>,
     ) -> Result<Vec<GeneratedChunk>, String> {
@@ -455,6 +465,7 @@ where
                     expected_chunks,
                     autoplay,
                     first_chunk_leading_silence_ms,
+                    playback_speed,
                     progress.as_ref(),
                     run_access.as_ref(),
                 )?;
@@ -471,6 +482,7 @@ where
                             expected_chunks,
                             autoplay,
                             first_chunk_leading_silence_ms,
+                            playback_speed,
                             progress.as_ref(),
                             run_access.as_ref(),
                         )?;
@@ -483,6 +495,7 @@ where
                                 expected_chunks,
                                 autoplay,
                                 first_chunk_leading_silence_ms,
+                                playback_speed,
                                 progress.as_ref(),
                                 run_access.as_ref(),
                             )?;
@@ -513,6 +526,7 @@ where
         total_chunks: usize,
         autoplay: bool,
         first_chunk_leading_silence_ms: u32,
+        playback_speed: f32,
         progress: Option<&ProgressCallback>,
         run_access: Option<&RunAccess>,
     ) -> Result<(), String> {
@@ -535,7 +549,7 @@ where
             } else {
                 0
             };
-            play_audio(&chunk.file_path, leading_silence_ms, run_access)?;
+            play_audio(&chunk.file_path, leading_silence_ms, playback_speed, run_access)?;
             let playback_elapsed_ms = playback_started.elapsed().as_millis();
             println!(
                 "[tts] chunk_playback_finished chunk={}/{} elapsed_ms={} path={}",
@@ -792,28 +806,6 @@ fn split_long_token(token: &str, max_chars: usize) -> Vec<String> {
     parts
 }
 
-fn load_env_file_if_present() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let env_path = manifest_dir.parent().map(|p| p.join(".env"));
-
-    if let Some(path) = env_path {
-        if let Ok(contents) = fs::read_to_string(path) {
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                if let Some((key, value)) = trimmed.split_once('=') {
-                    if env::var_os(key.trim()).is_none() {
-                        let clean = value.trim().trim_matches('"').trim_matches('\'');
-                        env::set_var(key.trim(), clean);
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn build_output_directory() -> Result<PathBuf, String> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -906,17 +898,157 @@ fn sleep_with_run_control(duration: Duration, run_access: Option<&RunAccess>) ->
     }
 }
 
-fn play_audio(file_path: &str, leading_silence_ms: u32, run_access: Option<&RunAccess>) -> Result<(), String> {
-    if let Some(run_access) = run_access {
-        run_access.check_cancelled()?;
-        run_access.update_phase("tts_loading_audio");
-    }
-
+fn decode_audio_samples(file_path: &str) -> Result<(u16, u32, Vec<f32>), String> {
     let file = fs::File::open(file_path)
         .map_err(|err| format!("Failed to open audio file for playback: {err}"))?;
     let reader = BufReader::new(file);
     let source = Decoder::new(reader)
         .map_err(|err| format!("Failed to decode audio file '{file_path}': {err}"))?;
+    let channels = source.channels();
+    let sample_rate = source.sample_rate();
+    let samples = source.convert_samples::<f32>().collect();
+
+    Ok((channels, sample_rate, samples))
+}
+
+fn crossfade_strength(position: usize, overlap: usize) -> f32 {
+    if overlap <= 1 {
+        return 1.0;
+    }
+
+    position as f32 / (overlap - 1) as f32
+}
+
+fn find_best_overlap_offset(
+    previous_tail: &[f32],
+    channel_samples: &[f32],
+    next_search_start: usize,
+    overlap: usize,
+    search: usize,
+) -> usize {
+    let max_offset = (channel_samples.len().saturating_sub(overlap)).min(next_search_start + search);
+    let mut best_offset = next_search_start.min(max_offset);
+    let mut best_score = f32::MIN;
+
+    for candidate in next_search_start.min(max_offset)..=max_offset {
+        let candidate_slice = &channel_samples[candidate..candidate + overlap];
+        let score = previous_tail
+            .iter()
+            .zip(candidate_slice.iter())
+            .map(|(left, right)| left * right)
+            .sum::<f32>();
+
+        if score > best_score {
+            best_score = score;
+            best_offset = candidate;
+        }
+    }
+
+    best_offset
+}
+
+fn time_stretch_channel_samples(channel_samples: &[f32], playback_speed: f32) -> Vec<f32> {
+    if channel_samples.len() < TIME_STRETCH_FRAME_SIZE || (playback_speed - 1.0).abs() < 0.01 {
+        return channel_samples.to_vec();
+    }
+
+    let frame_size = TIME_STRETCH_FRAME_SIZE.min(channel_samples.len());
+    let overlap = TIME_STRETCH_OVERLAP.min(frame_size / 4).max(64);
+    let analysis_hop = ((frame_size - overlap) as f32 * playback_speed)
+        .round()
+        .max(1.0) as usize;
+    let synthesis_hop = frame_size - overlap;
+    let search = TIME_STRETCH_SEARCH.min(synthesis_hop.max(1));
+
+    if channel_samples.len() <= frame_size + overlap || synthesis_hop == 0 {
+        return channel_samples.to_vec();
+    }
+
+    let estimated_frames = ((channel_samples.len() as f32 / analysis_hop as f32).ceil() as usize).max(1);
+    let mut output = Vec::with_capacity(estimated_frames * synthesis_hop + frame_size);
+    output.extend_from_slice(&channel_samples[..frame_size]);
+
+    let mut input_pos = analysis_hop.min(channel_samples.len().saturating_sub(frame_size));
+
+    while input_pos + frame_size <= channel_samples.len() {
+        let output_len = output.len();
+        let previous_tail_start = output_len.saturating_sub(overlap);
+        let previous_tail = &output[previous_tail_start..output_len];
+        let search_start = input_pos.saturating_sub(search / 2);
+        let best_offset = find_best_overlap_offset(
+            previous_tail,
+            channel_samples,
+            search_start,
+            overlap,
+            search,
+        );
+        let frame = &channel_samples[best_offset..best_offset + frame_size];
+
+        for i in 0..overlap {
+            let fade_in = crossfade_strength(i, overlap);
+            let fade_out = 1.0 - fade_in;
+            let out_index = output_len - overlap + i;
+            output[out_index] = (output[out_index] * fade_out) + (frame[i] * fade_in);
+        }
+
+        output.extend_from_slice(&frame[overlap..]);
+        input_pos = best_offset.saturating_add(analysis_hop);
+    }
+
+    output
+}
+
+fn time_stretch_samples(samples: &[f32], channels: u16, playback_speed: f32) -> Vec<f32> {
+    if channels <= 1 {
+        return time_stretch_channel_samples(samples, playback_speed);
+    }
+
+    let channel_count = channels as usize;
+    let frames = samples.len() / channel_count;
+    if frames < TIME_STRETCH_FRAME_SIZE {
+        return samples.to_vec();
+    }
+
+    let mut split_channels = vec![Vec::with_capacity(frames); channel_count];
+    for frame in samples.chunks_exact(channel_count) {
+        for (channel_index, sample) in frame.iter().enumerate() {
+            split_channels[channel_index].push(*sample);
+        }
+    }
+
+    let stretched_channels: Vec<Vec<f32>> = split_channels
+        .iter()
+        .map(|channel| time_stretch_channel_samples(channel, playback_speed))
+        .collect();
+    let output_frames = stretched_channels
+        .iter()
+        .map(Vec::len)
+        .min()
+        .unwrap_or(0);
+    let mut interleaved = Vec::with_capacity(output_frames * channel_count);
+
+    for frame_index in 0..output_frames {
+        for channel in &stretched_channels {
+            interleaved.push(channel[frame_index]);
+        }
+    }
+
+    interleaved
+}
+
+fn play_audio(
+    file_path: &str,
+    leading_silence_ms: u32,
+    playback_speed: f32,
+    run_access: Option<&RunAccess>,
+) -> Result<(), String> {
+    if let Some(run_access) = run_access {
+        run_access.check_cancelled()?;
+        run_access.update_phase("tts_loading_audio");
+    }
+
+    let (channels, sample_rate, samples) = decode_audio_samples(file_path)?;
+    let stretched_samples = time_stretch_samples(&samples, channels, playback_speed);
 
     let (stream, stream_handle) = OutputStream::try_default()
         .map_err(|err| format!("Failed to open default audio output device: {err}"))?;
@@ -938,7 +1070,14 @@ fn play_audio(file_path: &str, leading_silence_ms: u32, run_access: Option<&RunA
         sleep_with_run_control(Duration::from_millis(leading_silence_ms as u64), run_access)?;
     }
 
-    sink.append(source);
+    if (playback_speed - 1.0).abs() >= 0.01 {
+        println!(
+            "[tts] playback_speed_mode=time_stretch speed={} path={} note=pitch-preserving-ish overlap-add",
+            playback_speed, file_path
+        );
+    }
+
+    sink.append(SamplesBuffer::new(channels, sample_rate, stretched_samples));
 
     loop {
         if let Some(run_access) = run_access {
@@ -976,15 +1115,12 @@ pub fn speak_text_with_progress_and_control(
     progress: Option<ProgressCallback>,
     run_access: Option<RunAccess>,
 ) -> Result<SpeakTextResult, String> {
-    load_env_file_if_present();
-
     let text = options.text.unwrap_or_default().trim().to_string();
     if text.is_empty() {
         return Err("No text provided for speech synthesis".into());
     }
 
-    let api_key = env::var("OPENAI_API_KEY")
-        .map_err(|_| "OPENAI_API_KEY is missing. Add it to the project's .env file.".to_string())?;
+    let api_key = resolve_openai_api_key(settings)?;
 
     let resolved = ResolvedSpeakOptions {
         voice: options.voice.unwrap_or_else(|| DEFAULT_VOICE.to_string()),
@@ -996,6 +1132,7 @@ pub fn speak_text_with_progress_and_control(
         first_chunk_leading_silence_ms: options
             .first_chunk_leading_silence_ms
             .unwrap_or(settings.first_chunk_leading_silence_ms),
+        playback_speed: settings.playback_speed,
     };
 
     let provider = OpenAiSpeechProvider::new(api_key);
@@ -1006,7 +1143,7 @@ pub fn speak_text_with_progress_and_control(
 
 #[cfg(test)]
 mod tests {
-    use super::{split_into_sentences, TextChunker};
+    use super::{split_into_sentences, time_stretch_samples, TextChunker, TIME_STRETCH_FRAME_SIZE};
 
     #[test]
     fn keeps_short_text_in_one_chunk() {
@@ -1040,5 +1177,28 @@ mod tests {
     fn splits_double_newlines_into_separate_segments() {
         let sentences = split_into_sentences("Title\n\nBody starts here.");
         assert_eq!(sentences, vec!["Title", "Body starts here."]);
+    }
+
+    #[test]
+    fn time_stretch_shortens_audio_when_speeding_up() {
+        let input: Vec<f32> = (0..TIME_STRETCH_FRAME_SIZE * 6)
+            .map(|index| ((index as f32) * 0.01).sin())
+            .collect();
+
+        let output = time_stretch_samples(&input, 1, 1.5);
+
+        assert!(output.len() < input.len());
+        assert!(output.len() > input.len() / 3);
+    }
+
+    #[test]
+    fn time_stretch_lengthens_audio_when_slowing_down() {
+        let input: Vec<f32> = (0..TIME_STRETCH_FRAME_SIZE * 6)
+            .map(|index| ((index as f32) * 0.01).sin())
+            .collect();
+
+        let output = time_stretch_samples(&input, 1, 0.75);
+
+        assert!(output.len() > input.len());
     }
 }

@@ -44,15 +44,23 @@ mod commands {
     }
 
     #[tauri::command]
-    pub fn translate_text_command(options: TranslateTextOptions) -> Result<TranslateTextResult, String> {
-        translate_text(options)
+    pub fn translate_text_command(
+        options: TranslateTextOptions,
+        settings: State<'_, SettingsState>,
+    ) -> Result<TranslateTextResult, String> {
+        translate_text(options, &settings.get())
     }
 
     #[tauri::command]
     pub fn get_settings(settings: State<'_, SettingsState>) -> AppSettings { settings.get() }
 
     #[tauri::command]
-    pub fn update_settings(next: AppSettings, settings: State<'_, SettingsState>) -> AppSettings { settings.update(next) }
+    pub fn update_settings(next: AppSettings, settings: State<'_, SettingsState>) -> Result<AppSettings, String> {
+        settings.update(next)
+    }
+
+    #[tauri::command]
+    pub fn reset_settings(settings: State<'_, SettingsState>) -> Result<AppSettings, String> { settings.reset() }
 
     #[tauri::command]
     pub fn get_language_options() -> Vec<LanguageOption> { LANGUAGE_OPTIONS.to_vec() }
@@ -134,7 +142,7 @@ mod commands {
             target_language: base.target_language.or(Some(app_settings.translation_target_language.clone())),
             source_language: base.source_language,
             model: base.model,
-        })?;
+        }, &app_settings)?;
         let speech = speak_text(
             SpeakTextOptions {
                 text: Some(translation.text.clone()),
@@ -152,4 +160,4 @@ mod commands {
     }
 }
 
-pub use commands::{cancel_current_run, capture_and_speak_command, capture_and_translate_command, capture_selected_text_command, get_language_options, get_settings, pause_resume_current_run, speak_text_command, translate_text_command, update_settings};
+pub use commands::{cancel_current_run, capture_and_speak_command, capture_and_translate_command, capture_selected_text_command, get_language_options, get_settings, pause_resume_current_run, reset_settings, speak_text_command, translate_text_command, update_settings};

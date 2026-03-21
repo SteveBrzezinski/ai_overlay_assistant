@@ -2,6 +2,15 @@
 
 Windows-first Tauri app for selection-based AI flows with **global run control**.
 
+## Settings And Local Config
+
+- UI settings are persistent and stored in a local config file at `.voice-overlay-assistant.config.json` in the project root.
+- The file is created on first start and is git-ignored.
+- The settings UI now covers audio format, first-chunk lead-in, speech playback speed, translation target language, and the OpenAI API key.
+- If an OpenAI API key is saved in the UI, it overrides `OPENAI_API_KEY` from `.env`. If the UI field is empty, `.env` remains the fallback.
+- The Settings view includes a reset-to-default action with confirmation before anything is cleared.
+- The default UI language is English, and the default translation target language is English.
+
 ## Kernidee
 
 Die App arbeitet immer mit einem **zentralen aktiven Run**.
@@ -54,11 +63,16 @@ Das Ziel ist:
 - eingebetteter Rust-Audioplayer über `rodio`
 - Standard-Audioformat: **WAV**
 - konfigurierbarer Startpuffer für den ersten Chunk
+- konfigurierbare Speech-Playback-Geschwindigkeit von `0.5x` bis `2.0x`
 - Translation mit konfigurierbarer Zielsprache
 - Settings in der UI für:
   - Audioformat (`WAV` / `MP3`)
   - erster Chunk Startpuffer
+  - Speech-Playback-Speed
   - Zielsprache für Übersetzung
+  - OpenAI API Key
+  - Reset auf Default-Werte mit Bestätigung
+- Settings werden lokal persistent gespeichert
 - Timing-/Chunk-Logging für Debugging
 
 ## Bedienung
@@ -80,6 +94,7 @@ Der Default bleibt **WAV**. Das Playback läuft jetzt **direkt in Rust über ein
 - WAV von OpenAI wird nicht mehr an `SoundPlayer`, MCI oder WMPlayer delegiert
 - Chunks werden weiterhin parallel erzeugt, aber **geordnet und sequentiell** abgespielt
 - der optionale Startpuffer für den ersten Chunk wird beim Playback eingefügt
+- die Playback-Geschwindigkeit wird direkt beim `rodio`-Playback angewendet
 - MP3 bleibt als Option in den Settings erhalten
 
 Praktische Einschätzung:
@@ -155,6 +170,8 @@ OPENAI_API_KEY=your_key_here
 
 Falls noch keine Datei existiert, kannst du z. B. in PowerShell eine neue erzeugen oder `.env.example` als Vorlage nutzen.
 
+Alternativ kannst du den OpenAI API Key direkt in der Settings-UI hinterlegen. Wenn dort ein Key gespeichert ist, hat er Vorrang vor `.env`.
+
 ### Dev-Modus starten
 
 ```powershell
@@ -178,6 +195,8 @@ npm run tauri:build
 npm install
 npm run tauri:dev
 ```
+
+Beim ersten Start erzeugt die App die lokale Datei `.voice-overlay-assistant.config.json`. Darin werden die UI-Settings inklusive optional gespeichertem OpenAI API Key abgelegt.
 
 ## Checks
 

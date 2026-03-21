@@ -26,6 +26,8 @@ export type AppSettings = {
   ttsFormat: 'wav' | 'mp3';
   firstChunkLeadingSilenceMs: number;
   translationTargetLanguage: string;
+  playbackSpeed: number;
+  openaiApiKey: string;
 };
 
 export type LanguageOption = {
@@ -105,6 +107,10 @@ export async function getSettings(): Promise<AppSettings> {
 
 export async function updateSettings(next: AppSettings): Promise<AppSettings> {
   return invoke<AppSettings>('update_settings', { next });
+}
+
+export async function resetSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>('reset_settings');
 }
 
 export async function getLanguageOptions(): Promise<LanguageOption[]> {

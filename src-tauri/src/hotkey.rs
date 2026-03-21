@@ -523,7 +523,7 @@ mod windows_impl {
                 target_language: Some(settings.translation_target_language.clone()),
                 source_language: None,
                 model: None,
-            });
+            }, &settings);
 
             let translation = match translation {
                 Ok(translation) => translation,
