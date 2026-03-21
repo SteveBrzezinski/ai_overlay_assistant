@@ -1,16 +1,17 @@
-use crate::settings::AppSettings;
+use crate::{run_controller::{is_cancelled_error, RunAccess}, settings::AppSettings};
+use rodio::{Decoder, OutputStream, Sink};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     env, fs,
+    io::BufReader,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicUsize, Ordering},
         mpsc, Arc,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini-tts";
@@ -47,6 +48,46 @@ pub struct SpeakTextResult {
     pub format: String,
     pub autoplay: bool,
 }
+
+#[derive(Debug, Clone)]
+pub enum TtsProgress {
+    PipelineStarted {
+        chunk_count: usize,
+        format: String,
+        autoplay: bool,
+        max_parallel_requests: usize,
+    },
+    ChunkRequestStarted {
+        index: usize,
+        total: usize,
+        text_chars: usize,
+    },
+    ChunkRequestFinished {
+        index: usize,
+        total: usize,
+        bytes_received: usize,
+        elapsed_ms: u128,
+    },
+    ChunkFileWritten {
+        index: usize,
+        total: usize,
+        file_path: String,
+        bytes_written: usize,
+        elapsed_ms: u128,
+    },
+    ChunkPlaybackStarted {
+        index: usize,
+        total: usize,
+        file_path: String,
+    },
+    ChunkPlaybackFinished {
+        index: usize,
+        total: usize,
+        elapsed_ms: u128,
+    },
+}
+
+pub type ProgressCallback = Arc<dyn Fn(TtsProgress) + Send + Sync>;
 
 #[derive(Serialize)]
 struct OpenAiSpeechRequest<'a> {
@@ -91,6 +132,9 @@ trait SpeechProvider: Send + Sync + Clone + 'static {
         &self,
         options: &ResolvedSpeakOptions,
         chunk: &ChunkJob,
+        total_chunks: usize,
+        progress: Option<&ProgressCallback>,
+        run_access: Option<&RunAccess>,
     ) -> Result<GeneratedChunk, String>;
 }
 
@@ -114,7 +158,24 @@ impl SpeechProvider for OpenAiSpeechProvider {
         &self,
         options: &ResolvedSpeakOptions,
         chunk: &ChunkJob,
+        total_chunks: usize,
+        progress: Option<&ProgressCallback>,
+        run_access: Option<&RunAccess>,
     ) -> Result<GeneratedChunk, String> {
+        if let Some(run_access) = run_access {
+            run_access.check_cancelled()?;
+            run_access.update_chunk_phase("tts_requesting_audio", chunk.index + 1, total_chunks);
+        }
+
+        if let Some(progress) = progress {
+            progress(TtsProgress::ChunkRequestStarted {
+                index: chunk.index,
+                total: total_chunks,
+                text_chars: chunk.text.chars().count(),
+            });
+        }
+
+        let request_started = Instant::now();
         let response = self
             .client
             .post("https://api.openai.com/v1/audio/speech")
@@ -129,6 +190,10 @@ impl SpeechProvider for OpenAiSpeechProvider {
             .send()
             .map_err(|err| format!("OpenAI request failed: {err}"))?;
 
+        if let Some(run_access) = run_access {
+            run_access.check_cancelled()?;
+        }
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().unwrap_or_default();
@@ -139,10 +204,39 @@ impl SpeechProvider for OpenAiSpeechProvider {
             .bytes()
             .map_err(|err| format!("Failed to read audio response: {err}"))?;
 
-        let bytes = maybe_prepend_leading_silence(bytes.to_vec(), options, chunk.index)?;
+        let response_elapsed_ms = request_started.elapsed().as_millis();
+        if let Some(progress) = progress {
+            progress(TtsProgress::ChunkRequestFinished {
+                index: chunk.index,
+                total: total_chunks,
+                bytes_received: bytes.len(),
+                elapsed_ms: response_elapsed_ms,
+            });
+        }
 
+        if let Some(run_access) = run_access {
+            run_access.check_cancelled()?;
+            run_access.update_chunk_phase("tts_writing_chunk", chunk.index + 1, total_chunks);
+        }
+
+        let bytes = normalize_audio_bytes(bytes.to_vec(), options)?;
+        let bytes = maybe_prepend_leading_silence(bytes, options, chunk.index)?;
         fs::write(&chunk.file_path, &bytes)
             .map_err(|err| format!("Failed to write audio file: {err}"))?;
+
+        if let Some(progress) = progress {
+            progress(TtsProgress::ChunkFileWritten {
+                index: chunk.index,
+                total: total_chunks,
+                file_path: chunk.file_path.to_string_lossy().to_string(),
+                bytes_written: bytes.len(),
+                elapsed_ms: request_started.elapsed().as_millis(),
+            });
+        }
+
+        if let Some(run_access) = run_access {
+            run_access.check_cancelled()?;
+        }
 
         Ok(GeneratedChunk {
             index: chunk.index,
@@ -165,11 +259,40 @@ where
         Self { provider, chunker }
     }
 
-    fn run(&self, text: &str, options: ResolvedSpeakOptions) -> Result<SpeakTextResult, String> {
+    fn run(
+        &self,
+        text: &str,
+        options: ResolvedSpeakOptions,
+        progress: Option<ProgressCallback>,
+        run_access: Option<RunAccess>,
+    ) -> Result<SpeakTextResult, String> {
+        let started = Instant::now();
+        if let Some(run_access) = &run_access {
+            run_access.check_cancelled()?;
+            run_access.update_phase("tts_chunking");
+        }
         let chunks = self.chunker.split(text);
         if chunks.is_empty() {
             return Err("No text provided for speech synthesis".into());
         }
+
+        if let Some(progress_cb) = &progress {
+            progress_cb(TtsProgress::PipelineStarted {
+                chunk_count: chunks.len(),
+                format: options.format.clone(),
+                autoplay: options.autoplay,
+                max_parallel_requests: options.max_parallel_requests,
+            });
+        }
+
+        println!(
+            "[tts] pipeline_start format={} autoplay={} planned_chunks={} max_parallel_requests={} text_chars={}",
+            options.format,
+            options.autoplay,
+            chunks.len(),
+            options.max_parallel_requests,
+            text.chars().count()
+        );
 
         let output_directory = build_output_directory()?;
         let jobs: Vec<ChunkJob> = chunks
@@ -182,11 +305,7 @@ where
             })
             .collect();
 
-        let worker_count = options
-            .max_parallel_requests
-            .min(jobs.len())
-            .max(1);
-
+        let worker_count = options.max_parallel_requests.min(jobs.len()).max(1);
         let expected_chunks = jobs.len();
         let (sender, receiver) = mpsc::channel::<PipelineMessage>();
         let next_index = Arc::new(AtomicUsize::new(0));
@@ -199,46 +318,106 @@ where
             let sender = sender.clone();
             let next_index = Arc::clone(&next_index);
             let jobs = Arc::clone(&shared_jobs);
+            let progress = progress.clone();
+            let run_access = run_access.clone();
 
-            worker_handles.push(thread::spawn(move || {
-                loop {
-                    let job_index = next_index.fetch_add(1, Ordering::SeqCst);
-                    if job_index >= jobs.len() {
+            worker_handles.push(thread::spawn(move || loop {
+                if let Some(run_access) = &run_access {
+                    if run_access.check_cancelled().is_err() {
                         break;
                     }
+                }
 
-                    let job = jobs[job_index].clone();
-                    let message = match provider.synthesize_chunk(&options, &job) {
-                        Ok(chunk) => PipelineMessage::ChunkReady(chunk),
-                        Err(error) => PipelineMessage::Failed(format!(
+                let job_index = next_index.fetch_add(1, Ordering::SeqCst);
+                if job_index >= jobs.len() {
+                    break;
+                }
+
+                let job = jobs[job_index].clone();
+                let message = match provider.synthesize_chunk(
+                    &options,
+                    &job,
+                    jobs.len(),
+                    progress.as_ref(),
+                    run_access.as_ref(),
+                ) {
+                    Ok(chunk) => {
+                        if let Some(run_access) = &run_access {
+                            if run_access.check_cancelled().is_err() {
+                                break;
+                            }
+                        }
+
+                        PipelineMessage::ChunkReady(chunk)
+                    }
+                    Err(error) => {
+                        if is_cancelled_error(&error) {
+                            break;
+                        }
+
+                        PipelineMessage::Failed(format!(
                             "Chunk {} of {} failed: {error}",
                             job.index + 1,
                             jobs.len()
-                        )),
-                    };
+                        ))
+                    }
+                };
 
-                    if sender.send(message).is_err() {
+                if let PipelineMessage::Failed(error) = &message {
+                    if is_cancelled_error(error) {
                         break;
                     }
+                }
+
+                if sender.send(message).is_err() {
+                    break;
                 }
             }));
         }
         drop(sender);
 
-        let playback_result =
-            self.collect_and_play_ordered_chunks(receiver, expected_chunks, options.autoplay);
-        let join_result = join_worker_handles(worker_handles);
-
-        if let Err(error) = join_result {
-            if playback_result.is_ok() {
-                return Err(error);
-            }
+        if let Some(run_access) = &run_access {
+            run_access.update_phase("tts_waiting_for_audio");
         }
 
-        let ordered_chunks = playback_result?;
+        let playback_result = self.collect_and_play_ordered_chunks(
+            receiver,
+            expected_chunks,
+            options.autoplay,
+            options.first_chunk_leading_silence_ms,
+            progress.clone(),
+            run_access.clone(),
+        );
+        let ordered_chunks = match playback_result {
+            Ok(ordered_chunks) => ordered_chunks,
+            Err(error) if is_cancelled_error(&error) => {
+                println!(
+                    "[tts] pipeline_cancelled planned_chunks={} total_ms={}",
+                    expected_chunks,
+                    started.elapsed().as_millis()
+                );
+                return Err(error);
+            }
+            Err(error) => {
+                let _ = join_worker_handles(worker_handles);
+                return Err(error);
+            }
+        };
+        let join_result = join_worker_handles(worker_handles);
+        if let Err(error) = join_result {
+            return Err(error);
+        }
         let first_chunk = ordered_chunks
             .first()
             .ok_or_else(|| "No audio chunks were produced.".to_string())?;
+
+        println!(
+            "[tts] pipeline_done planned_chunks={} produced_chunks={} bytes_written={} total_ms={}",
+            expected_chunks,
+            ordered_chunks.len(),
+            ordered_chunks.iter().map(|chunk| chunk.bytes_written).sum::<usize>(),
+            started.elapsed().as_millis()
+        );
 
         Ok(SpeakTextResult {
             file_path: first_chunk.file_path.clone(),
@@ -257,28 +436,56 @@ where
         receiver: mpsc::Receiver<PipelineMessage>,
         expected_chunks: usize,
         autoplay: bool,
+        first_chunk_leading_silence_ms: u32,
+        progress: Option<ProgressCallback>,
+        run_access: Option<RunAccess>,
     ) -> Result<Vec<GeneratedChunk>, String> {
         let mut buffered = HashMap::<usize, GeneratedChunk>::new();
         let mut ordered = Vec::with_capacity(expected_chunks);
         let mut next_index = 0usize;
 
         while ordered.len() < expected_chunks {
+            if let Some(run_access) = &run_access {
+                run_access.check_cancelled()?;
+            }
+
             if let Some(chunk) = buffered.remove(&next_index) {
-                self.play_chunk_if_needed(&chunk, autoplay)?;
+                self.play_chunk_if_needed(
+                    &chunk,
+                    expected_chunks,
+                    autoplay,
+                    first_chunk_leading_silence_ms,
+                    progress.as_ref(),
+                    run_access.as_ref(),
+                )?;
                 ordered.push(chunk);
                 next_index += 1;
                 continue;
             }
 
-            match receiver.recv() {
+            match receiver.recv_timeout(Duration::from_millis(50)) {
                 Ok(PipelineMessage::ChunkReady(chunk)) => {
                     if chunk.index == next_index {
-                        self.play_chunk_if_needed(&chunk, autoplay)?;
+                        self.play_chunk_if_needed(
+                            &chunk,
+                            expected_chunks,
+                            autoplay,
+                            first_chunk_leading_silence_ms,
+                            progress.as_ref(),
+                            run_access.as_ref(),
+                        )?;
                         ordered.push(chunk);
                         next_index += 1;
 
                         while let Some(buffered_chunk) = buffered.remove(&next_index) {
-                            self.play_chunk_if_needed(&buffered_chunk, autoplay)?;
+                            self.play_chunk_if_needed(
+                                &buffered_chunk,
+                                expected_chunks,
+                                autoplay,
+                                first_chunk_leading_silence_ms,
+                                progress.as_ref(),
+                                run_access.as_ref(),
+                            )?;
                             ordered.push(buffered_chunk);
                             next_index += 1;
                         }
@@ -287,7 +494,8 @@ where
                     }
                 }
                 Ok(PipelineMessage::Failed(error)) => return Err(error),
-                Err(_) => {
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(
                         "The chunked TTS pipeline stopped before all audio chunks were ready."
                             .to_string(),
@@ -299,63 +507,100 @@ where
         Ok(ordered)
     }
 
-    fn play_chunk_if_needed(&self, chunk: &GeneratedChunk, autoplay: bool) -> Result<(), String> {
+    fn play_chunk_if_needed(
+        &self,
+        chunk: &GeneratedChunk,
+        total_chunks: usize,
+        autoplay: bool,
+        first_chunk_leading_silence_ms: u32,
+        progress: Option<&ProgressCallback>,
+        run_access: Option<&RunAccess>,
+    ) -> Result<(), String> {
         if autoplay {
-            play_audio(&chunk.file_path)?;
+            if let Some(run_access) = run_access {
+                run_access.update_chunk_phase("tts_playback", chunk.index + 1, total_chunks);
+            }
+
+            if let Some(progress) = progress {
+                progress(TtsProgress::ChunkPlaybackStarted {
+                    index: chunk.index,
+                    total: total_chunks,
+                    file_path: chunk.file_path.clone(),
+                });
+            }
+
+            let playback_started = Instant::now();
+            let leading_silence_ms = if chunk.index == 0 {
+                first_chunk_leading_silence_ms
+            } else {
+                0
+            };
+            play_audio(&chunk.file_path, leading_silence_ms, run_access)?;
+            let playback_elapsed_ms = playback_started.elapsed().as_millis();
+            println!(
+                "[tts] chunk_playback_finished chunk={}/{} elapsed_ms={} path={}",
+                chunk.index + 1,
+                total_chunks,
+                playback_elapsed_ms,
+                chunk.file_path
+            );
+
+            if let Some(progress) = progress {
+                progress(TtsProgress::ChunkPlaybackFinished {
+                    index: chunk.index,
+                    total: total_chunks,
+                    elapsed_ms: playback_elapsed_ms,
+                });
+            }
         }
 
         Ok(())
     }
 }
 
+fn normalize_audio_bytes(bytes: Vec<u8>, options: &ResolvedSpeakOptions) -> Result<Vec<u8>, String> {
+    if options.format != "wav" {
+        return Ok(bytes);
+    }
+
+    normalize_openai_wav_header(bytes)
+}
+
+fn normalize_openai_wav_header(mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("Expected a WAV payload, but received an unsupported audio file header.".to_string());
+    }
+
+    let riff_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    let data_size = u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]);
+
+    let expected_riff_size = (bytes.len().saturating_sub(8)) as u32;
+    let expected_data_size = (bytes.len().saturating_sub(44)) as u32;
+
+    if riff_size == u32::MAX || riff_size == 0 {
+        bytes[4..8].copy_from_slice(&expected_riff_size.to_le_bytes());
+    }
+
+    if data_size == u32::MAX || data_size == 0 {
+        bytes[40..44].copy_from_slice(&expected_data_size.to_le_bytes());
+    }
+
+    Ok(bytes)
+}
 
 fn maybe_prepend_leading_silence(
     bytes: Vec<u8>,
     options: &ResolvedSpeakOptions,
     chunk_index: usize,
 ) -> Result<Vec<u8>, String> {
-    if chunk_index != 0 || options.first_chunk_leading_silence_ms == 0 || options.format != "wav" {
-        return Ok(bytes);
+    if chunk_index == 0 && options.first_chunk_leading_silence_ms > 0 && options.format == "wav" {
+        println!(
+            "[tts] first_chunk_silence_mode=playback_side silence_ms={}",
+            options.first_chunk_leading_silence_ms
+        );
     }
 
-    prepend_wav_silence(bytes, options.first_chunk_leading_silence_ms)
-}
-
-fn prepend_wav_silence(bytes: Vec<u8>, silence_ms: u32) -> Result<Vec<u8>, String> {
-    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Err("Expected a PCM WAV file for silence padding, but received an unsupported WAV payload.".to_string());
-    }
-
-    let channels = u16::from_le_bytes([bytes[22], bytes[23]]) as usize;
-    let sample_rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as usize;
-    let bits_per_sample = u16::from_le_bytes([bytes[34], bytes[35]]) as usize;
-    let bytes_per_sample = channels * (bits_per_sample / 8);
-
-    if bytes_per_sample == 0 {
-        return Err("Invalid WAV header: zero bytes per sample.".to_string());
-    }
-
-    let silence_bytes = sample_rate
-        .saturating_mul(silence_ms as usize)
-        .saturating_div(1000)
-        .saturating_mul(bytes_per_sample);
-
-    if silence_bytes == 0 {
-        return Ok(bytes);
-    }
-
-    let data_start = 44usize;
-    let original_data_len = bytes.len().saturating_sub(data_start);
-    let mut output = bytes[..data_start].to_vec();
-    output.extend(std::iter::repeat(0u8).take(silence_bytes));
-    output.extend_from_slice(&bytes[data_start..]);
-
-    let new_data_len = (original_data_len + silence_bytes) as u32;
-    let new_riff_len = (output.len() - 8) as u32;
-    output[4..8].copy_from_slice(&new_riff_len.to_le_bytes());
-    output[40..44].copy_from_slice(&new_data_len.to_le_bytes());
-
-    Ok(output)
+    Ok(bytes)
 }
 
 #[derive(Clone)]
@@ -624,80 +869,113 @@ fn join_worker_handles(handles: Vec<thread::JoinHandle<()>>) -> Result<(), Strin
     Ok(())
 }
 
-fn play_audio(file_path: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let escaped = file_path.replace('\'', "''");
-        let lower = file_path.to_lowercase();
+struct SinkRegistrationGuard<'a> {
+    run_access: Option<&'a RunAccess>,
+}
 
-        let script = if lower.ends_with(".mp3") {
-            format!(
-                r#"$ErrorActionPreference = 'Stop'
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-public static class MciBridge {{
-  [DllImport("winmm.dll", CharSet = CharSet.Auto)]
-  public static extern int mciSendString(string command, StringBuilder buffer, int bufferSize, IntPtr hwndCallback);
-}}
-"@
-$alias = 'voiceoverlayclip'
-$path = '{escaped}'
-$openResult = [MciBridge]::mciSendString("open `"$path`" type mpegvideo alias $alias", $null, 0, [IntPtr]::Zero)
-if ($openResult -ne 0) {{
-  throw "MCI open failed with code $openResult"
-}}
-try {{
-  $playResult = [MciBridge]::mciSendString("play $alias wait", $null, 0, [IntPtr]::Zero)
-  if ($playResult -ne 0) {{
-    throw "MCI play failed with code $playResult"
-  }}
-}} finally {{
-  [void][MciBridge]::mciSendString("close $alias", $null, 0, [IntPtr]::Zero)
-}}
-"#
-            )
-        } else {
-            format!(
-                r#"$ErrorActionPreference = 'Stop'
-$player = New-Object System.Media.SoundPlayer
-$player.SoundLocation = '{escaped}'
-$player.Load()
-$player.PlaySync()
-"#
-            )
-        };
-
-        let output = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()
-            .map_err(|err| format!("Failed to launch audio player: {err}"))?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let detail = if !stderr.is_empty() {
-                stderr
-            } else if !stdout.is_empty() {
-                stdout
-            } else {
-                format!("status {}", output.status)
-            };
-            Err(format!("Audio playback failed: {detail}"))
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = file_path;
-        Err("Audio playback MVP is currently implemented for Windows only".into())
+impl<'a> SinkRegistrationGuard<'a> {
+    fn new(run_access: Option<&'a RunAccess>) -> Self {
+        Self { run_access }
     }
 }
 
+impl Drop for SinkRegistrationGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(run_access) = self.run_access {
+            run_access.clear_sink();
+        }
+    }
+}
+
+fn sleep_with_run_control(duration: Duration, run_access: Option<&RunAccess>) -> Result<(), String> {
+    let started = Instant::now();
+
+    loop {
+        if let Some(run_access) = run_access {
+            run_access.wait_if_paused()?;
+            run_access.check_cancelled()?;
+        }
+
+        let elapsed = started.elapsed();
+        if elapsed >= duration {
+            return Ok(());
+        }
+
+        let remaining = duration.saturating_sub(elapsed);
+        thread::sleep(remaining.min(Duration::from_millis(25)));
+    }
+}
+
+fn play_audio(file_path: &str, leading_silence_ms: u32, run_access: Option<&RunAccess>) -> Result<(), String> {
+    if let Some(run_access) = run_access {
+        run_access.check_cancelled()?;
+        run_access.update_phase("tts_loading_audio");
+    }
+
+    let file = fs::File::open(file_path)
+        .map_err(|err| format!("Failed to open audio file for playback: {err}"))?;
+    let reader = BufReader::new(file);
+    let source = Decoder::new(reader)
+        .map_err(|err| format!("Failed to decode audio file '{file_path}': {err}"))?;
+
+    let (stream, stream_handle) = OutputStream::try_default()
+        .map_err(|err| format!("Failed to open default audio output device: {err}"))?;
+    let sink = Arc::new(
+        Sink::try_new(&stream_handle).map_err(|err| format!("Failed to create audio sink: {err}"))?,
+    );
+    let _sink_registration = SinkRegistrationGuard::new(run_access);
+
+    if let Some(run_access) = run_access {
+        run_access.register_sink(Arc::clone(&sink))?;
+        run_access.update_phase("tts_playback_active");
+    }
+
+    if leading_silence_ms > 0 {
+        println!(
+            "[tts] chunk_playback_leading_silence_ms={} path={}",
+            leading_silence_ms, file_path
+        );
+        sleep_with_run_control(Duration::from_millis(leading_silence_ms as u64), run_access)?;
+    }
+
+    sink.append(source);
+
+    loop {
+        if let Some(run_access) = run_access {
+            run_access.wait_if_paused()?;
+            run_access.check_cancelled()?;
+        }
+
+        if sink.empty() {
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(30));
+    }
+
+    drop(stream);
+
+    Ok(())
+}
+
 pub fn speak_text(options: SpeakTextOptions, settings: &AppSettings) -> Result<SpeakTextResult, String> {
+    speak_text_with_progress(options, settings, None)
+}
+
+pub fn speak_text_with_progress(
+    options: SpeakTextOptions,
+    settings: &AppSettings,
+    progress: Option<ProgressCallback>,
+) -> Result<SpeakTextResult, String> {
+    speak_text_with_progress_and_control(options, settings, progress, None)
+}
+
+pub fn speak_text_with_progress_and_control(
+    options: SpeakTextOptions,
+    settings: &AppSettings,
+    progress: Option<ProgressCallback>,
+    run_access: Option<RunAccess>,
+) -> Result<SpeakTextResult, String> {
     load_env_file_if_present();
 
     let text = options.text.unwrap_or_default().trim().to_string();
@@ -723,7 +1001,7 @@ pub fn speak_text(options: SpeakTextOptions, settings: &AppSettings) -> Result<S
     let provider = OpenAiSpeechProvider::new(api_key);
     let pipeline = ChunkedSpeechPipeline::new(provider, TextChunker::new(resolved.max_chunk_chars));
 
-    pipeline.run(&text, resolved)
+    pipeline.run(&text, resolved, progress, run_access)
 }
 
 #[cfg(test)]

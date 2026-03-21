@@ -19,6 +19,8 @@ const fallbackHotkeyStatus: HotkeyStatus = {
   registered: false,
   accelerator: 'Ctrl+Shift+Space',
   translateAccelerator: 'Ctrl+Shift+T',
+  pauseResumeAccelerator: 'Ctrl+Shift+P',
+  cancelAccelerator: 'Ctrl+Shift+X',
   platform: 'unsupported',
   state: 'registering',
   message: 'Prüfe globale Hotkeys …',

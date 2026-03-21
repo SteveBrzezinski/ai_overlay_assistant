@@ -30,14 +30,16 @@ Windows-first Tauri app for two selection-based flows:
 
 ## Audio / WAV-Änderung
 
-Der Default wurde auf **WAV** umgestellt, weil das besser zum aktuellen Windows-Playback-Pfad passt:
-- WAV kann direkt über `System.Media.SoundPlayer` abgespielt werden
-- für den ersten Chunk wird bei WAV optional kurze Anfangsstille eingefügt
-- MP3 bleibt als Fallback/Option in den Settings erhalten
+Der Default bleibt **WAV**. Das Playback läuft jetzt **direkt in Rust über einen eingebetteten App-Player** statt über PowerShell / Windows-Player:
+- Playback der TTS-Chunks erfolgt app-intern über `rodio`
+- WAV von OpenAI wird nicht mehr an `SoundPlayer`, MCI oder WMPlayer delegiert
+- Chunks werden weiterhin parallel erzeugt, aber **geordnet und sequentiell** abgespielt
+- der optionale Startpuffer für den ersten Chunk wird jetzt **beim Playback** eingefügt statt die WAV-Datei umzuschreiben
+- MP3 bleibt als Option in den Settings erhalten, Hauptpfad ist aber jetzt robuster für WAV
 
 Praktische Einschätzung:
-- Für den aktuellen OS-Playback-MVP ist WAV hier sinnvoller als MP3.
-- Falls später weiter an Latenz und nahtlosen Übergängen gearbeitet wird, ist ein **eingebetteter eigener Player** wahrscheinlich langfristig robuster als Datei-für-Datei-Playback über OS-Skripte.
+- Das vermeidet Unterschiede je nach installiertem Windows-Playback-Pfad.
+- Für den aktuellen Stand ist ein kleiner eingebetteter Player robuster als Datei-für-Datei-Playback über OS-Skripte.
 
 ## Translation-MVP
 

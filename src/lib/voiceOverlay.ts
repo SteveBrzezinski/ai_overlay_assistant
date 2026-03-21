@@ -75,6 +75,8 @@ export type HotkeyStatus = {
   registered: boolean;
   accelerator: string;
   translateAccelerator: string;
+  pauseResumeAccelerator: string;
+  cancelAccelerator: string;
   platform: 'windows' | 'unsupported';
   state: 'idle' | 'registering' | 'working' | 'success' | 'error' | 'unsupported';
   message: string;
@@ -149,4 +151,12 @@ export async function captureAndTranslate(
       targetLanguage: translateOptions.targetLanguage,
     },
   });
+}
+
+export async function pauseResumeCurrentRun(): Promise<string> {
+  return invoke<string>('pause_resume_current_run');
+}
+
+export async function cancelCurrentRun(): Promise<string> {
+  return invoke<string>('cancel_current_run');
 }
