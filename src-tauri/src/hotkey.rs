@@ -124,12 +124,12 @@ pub fn init_hotkey(app: &AppHandle) {
 mod windows_impl {
     use super::{HotkeyState, DEFAULT_SPEAK_HOTKEY, DEFAULT_TRANSLATE_HOTKEY};
     use crate::{
-        selection_capture::CaptureOptions,
+        selection_capture::{capture_selected_text, CaptureOptions},
         settings::SettingsState,
-        translation::TranslateTextOptions,
-        tts::SpeakTextOptions,
+        translation::{translate_text, TranslateTextOptions},
+        tts::{speak_text_with_progress, SpeakTextOptions, TtsProgress},
     };
-    use std::{mem::MaybeUninit, thread, time::Duration};
+    use std::{mem::MaybeUninit, sync::Arc, thread, time::{Duration, Instant}};
     use tauri::{AppHandle, Manager};
     use windows::Win32::{
         Foundation::HWND,
@@ -237,22 +237,122 @@ mod windows_impl {
         state.is_running.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
+    fn update_working(app: &AppHandle, action: &str, message: String) {
+        let state = app.state::<HotkeyState>();
+        state.update(app, |snapshot| {
+            snapshot.state = "working";
+            snapshot.last_action = Some(action.to_string());
+            snapshot.message = message;
+        });
+    }
+
+    fn log_phase(action: &str, phase: &str, started: Instant, extra: &str) {
+        println!(
+            "[hotkey] action={} phase={} elapsed_ms={} {}",
+            action,
+            phase,
+            started.elapsed().as_millis(),
+            extra
+        );
+    }
+
     fn trigger_capture_and_speak(app: &AppHandle) {
         if !begin_run(
             app,
             "speak",
-            "Speak hotkey received. Copying the current selection and starting chunked OpenAI TTS …".to_string(),
+            "Speak hotkey received. Capturing selection …".to_string(),
         ) {
             return;
         }
 
         let app_handle = app.clone();
         thread::spawn(move || {
+            let overall_started = Instant::now();
+            let capture_started = Instant::now();
+            update_working(&app_handle, "speak", "Capturing selection …".to_string());
+
+            let capture = capture_selected_text(Some(CaptureOptions {
+                copy_delay_ms: Some(140),
+                restore_clipboard: Some(true),
+            }));
+
+            let capture = match capture {
+                Ok(capture) => {
+                    log_phase(
+                        "speak",
+                        "capture_end",
+                        capture_started,
+                        &format!("chars={} restored_clipboard={}", capture.text.chars().count(), capture.restored_clipboard),
+                    );
+                    capture
+                }
+                Err(error) => {
+                    let state = app_handle.state::<HotkeyState>();
+                    state.update(&app_handle, |snapshot| {
+                        snapshot.state = "error";
+                        snapshot.message = format!("Capture failed: {error}");
+                        snapshot.last_action = Some("speak".to_string());
+                    });
+                    finish_run(&app_handle);
+                    return;
+                }
+            };
+
+            if capture.text.trim().is_empty() {
+                let state = app_handle.state::<HotkeyState>();
+                state.update(&app_handle, |snapshot| {
+                    snapshot.state = "error";
+                    snapshot.message = capture
+                        .note
+                        .clone()
+                        .unwrap_or_else(|| "No marked text could be captured.".to_string());
+                    snapshot.last_action = Some("speak".to_string());
+                });
+                finish_run(&app_handle);
+                return;
+            }
+
             let settings = app_handle.state::<SettingsState>().get();
-            let result = crate::capture_and_speak_command(
-                Some(CaptureOptions { copy_delay_ms: Some(140), restore_clipboard: Some(true) }),
-                Some(SpeakTextOptions {
-                    text: None,
+            let progress_app = app_handle.clone();
+            let progress = Arc::new(move |progress: TtsProgress| match progress {
+                TtsProgress::PipelineStarted { chunk_count, format, autoplay, max_parallel_requests } => {
+                    println!(
+                        "[tts-progress] stage=pipeline_start planned_chunks={} format={} autoplay={} max_parallel_requests={}",
+                        chunk_count, format, autoplay, max_parallel_requests
+                    );
+                    update_working(
+                        &progress_app,
+                        "speak",
+                        format!("TTS pipeline started. Planned {chunk_count} chunk(s) as {}.", format.to_uppercase()),
+                    );
+                }
+                TtsProgress::ChunkRequestStarted { index, total, text_chars } => {
+                    println!("[tts-progress] stage=request_start chunk={}/{} text_chars={}", index + 1, total, text_chars);
+                    update_working(&progress_app, "speak", format!("Preparing chunk {}/{} … ({} chars)", index + 1, total, text_chars));
+                }
+                TtsProgress::ChunkRequestFinished { index, total, bytes_received, elapsed_ms } => {
+                    println!("[tts-progress] stage=request_finished chunk={}/{} bytes={} elapsed_ms={}", index + 1, total, bytes_received, elapsed_ms);
+                    update_working(&progress_app, "speak", format!("Chunk {}/{} ready from OpenAI after {} ms.", index + 1, total, elapsed_ms));
+                }
+                TtsProgress::ChunkFileWritten { index, total, file_path, bytes_written, elapsed_ms } => {
+                    println!("[tts-progress] stage=file_written chunk={}/{} bytes_written={} elapsed_ms={} path={}", index + 1, total, bytes_written, elapsed_ms, file_path);
+                    update_working(&progress_app, "speak", format!("Chunk {}/{} written. Waiting for ordered playback …", index + 1, total));
+                }
+                TtsProgress::ChunkPlaybackStarted { index, total, file_path } => {
+                    println!("[tts-progress] stage=playback_start chunk={}/{} path={}", index + 1, total, file_path);
+                    update_working(&progress_app, "speak", format!("Playing chunk {}/{} …", index + 1, total));
+                }
+                TtsProgress::ChunkPlaybackFinished { index, total, elapsed_ms } => {
+                    println!("[tts-progress] stage=playback_end chunk={}/{} elapsed_ms={}", index + 1, total, elapsed_ms);
+                    update_working(&progress_app, "speak", format!("Finished chunk {}/{} playback ({} ms).", index + 1, total, elapsed_ms));
+                }
+            });
+
+            let tts_started = Instant::now();
+            println!("[hotkey] action=speak phase=tts_pipeline_start elapsed_ms={} format={}", overall_started.elapsed().as_millis(), settings.tts_format);
+            let result = speak_text_with_progress(
+                SpeakTextOptions {
+                    text: Some(capture.text.clone()),
                     voice: Some("alloy".to_string()),
                     model: None,
                     format: Some(settings.tts_format.clone()),
@@ -260,8 +360,9 @@ mod windows_impl {
                     max_chunk_chars: None,
                     max_parallel_requests: Some(3),
                     first_chunk_leading_silence_ms: Some(settings.first_chunk_leading_silence_ms),
-                }),
-                app_handle.state::<SettingsState>(),
+                },
+                &settings,
+                Some(progress),
             );
 
             let state = app_handle.state::<HotkeyState>();
@@ -269,24 +370,27 @@ mod windows_impl {
                 Ok(result) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
                     snapshot.message = format!(
-                        "Speak run finished. Captured {} chars, generated {} chunk(s) as {}, and started playback with a small first-chunk buffer.",
-                        result.captured_text.chars().count(),
-                        result.speech.chunk_count,
-                        result.speech.format.to_uppercase()
+                        "Speak run finished in {} ms. Captured {} chars, generated {} chunk(s), and played them in order as {}.",
+                        overall_started.elapsed().as_millis(),
+                        capture.text.chars().count(),
+                        result.chunk_count,
+                        result.format.to_uppercase()
                     );
                     snapshot.last_action = Some("speak".to_string());
-                    snapshot.last_captured_text = Some(result.captured_text);
-                    snapshot.last_audio_path = Some(result.speech.file_path);
-                    snapshot.last_audio_output_directory = Some(result.speech.output_directory);
-                    snapshot.last_audio_chunk_count = Some(result.speech.chunk_count);
+                    snapshot.last_captured_text = Some(capture.text);
+                    snapshot.last_audio_path = Some(result.file_path);
+                    snapshot.last_audio_output_directory = Some(result.output_directory);
+                    snapshot.last_audio_chunk_count = Some(result.chunk_count);
                 }),
                 Err(error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "error";
-                    snapshot.message = error;
+                    snapshot.message = format!("Speak run failed after {} ms: {error}", tts_started.elapsed().as_millis());
                     snapshot.last_action = Some("speak".to_string());
+                    snapshot.last_captured_text = Some(capture.text.clone());
                 }),
             }
 
+            println!("[hotkey] action=speak phase=complete total_ms={}", overall_started.elapsed().as_millis());
             finish_run(&app_handle);
         });
     }
@@ -296,49 +400,182 @@ mod windows_impl {
         if !begin_run(
             app,
             "translate",
-            format!("Translate hotkey received. Copying the current selection and translating it to {target_language} …"),
+            format!("Translate hotkey received. Capturing selection for {target_language} …"),
         ) {
             return;
         }
 
         let app_handle = app.clone();
         thread::spawn(move || {
+            let overall_started = Instant::now();
+            let capture_started = Instant::now();
+            update_working(&app_handle, "translate", "Capturing selection …".to_string());
+
+            let capture = capture_selected_text(Some(CaptureOptions {
+                copy_delay_ms: Some(140),
+                restore_clipboard: Some(true),
+            }));
+
+            let capture = match capture {
+                Ok(capture) => {
+                    log_phase(
+                        "translate",
+                        "capture_end",
+                        capture_started,
+                        &format!("chars={} restored_clipboard={}", capture.text.chars().count(), capture.restored_clipboard),
+                    );
+                    capture
+                }
+                Err(error) => {
+                    let state = app_handle.state::<HotkeyState>();
+                    state.update(&app_handle, |snapshot| {
+                        snapshot.state = "error";
+                        snapshot.message = format!("Capture failed: {error}");
+                        snapshot.last_action = Some("translate".to_string());
+                    });
+                    finish_run(&app_handle);
+                    return;
+                }
+            };
+
+            if capture.text.trim().is_empty() {
+                let state = app_handle.state::<HotkeyState>();
+                state.update(&app_handle, |snapshot| {
+                    snapshot.state = "error";
+                    snapshot.message = capture
+                        .note
+                        .clone()
+                        .unwrap_or_else(|| "No marked text could be captured.".to_string());
+                    snapshot.last_action = Some("translate".to_string());
+                });
+                finish_run(&app_handle);
+                return;
+            }
+
             let settings = app_handle.state::<SettingsState>().get();
-            let result = crate::capture_and_translate_command(
-                Some(CaptureOptions { copy_delay_ms: Some(140), restore_clipboard: Some(true) }),
-                Some(TranslateTextOptions {
-                    text: None,
-                    target_language: Some(settings.translation_target_language.clone()),
-                    source_language: None,
+            let translation_started = Instant::now();
+            update_working(
+                &app_handle,
+                "translate",
+                format!("Translating selection to {} …", settings.translation_target_language),
+            );
+            println!(
+                "[hotkey] action=translate phase=translation_start elapsed_ms={} target_language={}",
+                overall_started.elapsed().as_millis(),
+                settings.translation_target_language
+            );
+
+            let translation = translate_text(TranslateTextOptions {
+                text: Some(capture.text.clone()),
+                target_language: Some(settings.translation_target_language.clone()),
+                source_language: None,
+                model: None,
+            });
+
+            let translation = match translation {
+                Ok(translation) => {
+                    println!(
+                        "[hotkey] action=translate phase=translation_end elapsed_ms={} translated_chars={} target_language={}",
+                        translation_started.elapsed().as_millis(),
+                        translation.text.chars().count(),
+                        translation.target_language
+                    );
+                    translation
+                }
+                Err(error) => {
+                    let state = app_handle.state::<HotkeyState>();
+                    state.update(&app_handle, |snapshot| {
+                        snapshot.state = "error";
+                        snapshot.message = format!("Translation failed after {} ms: {error}", translation_started.elapsed().as_millis());
+                        snapshot.last_action = Some("translate".to_string());
+                        snapshot.last_captured_text = Some(capture.text.clone());
+                    });
+                    finish_run(&app_handle);
+                    return;
+                }
+            };
+
+            let progress_app = app_handle.clone();
+            let progress = Arc::new(move |progress: TtsProgress| match progress {
+                TtsProgress::PipelineStarted { chunk_count, format, autoplay, max_parallel_requests } => {
+                    println!(
+                        "[tts-progress] stage=pipeline_start planned_chunks={} format={} autoplay={} max_parallel_requests={}",
+                        chunk_count, format, autoplay, max_parallel_requests
+                    );
+                    update_working(
+                        &progress_app,
+                        "translate",
+                        format!("TTS pipeline started for translation. Planned {chunk_count} chunk(s) as {}.", format.to_uppercase()),
+                    );
+                }
+                TtsProgress::ChunkRequestStarted { index, total, text_chars } => {
+                    println!("[tts-progress] stage=request_start chunk={}/{} text_chars={}", index + 1, total, text_chars);
+                    update_working(&progress_app, "translate", format!("Preparing translated chunk {}/{} … ({} chars)", index + 1, total, text_chars));
+                }
+                TtsProgress::ChunkRequestFinished { index, total, bytes_received, elapsed_ms } => {
+                    println!("[tts-progress] stage=request_finished chunk={}/{} bytes={} elapsed_ms={}", index + 1, total, bytes_received, elapsed_ms);
+                    update_working(&progress_app, "translate", format!("Translated chunk {}/{} ready after {} ms.", index + 1, total, elapsed_ms));
+                }
+                TtsProgress::ChunkFileWritten { index, total, file_path, bytes_written, elapsed_ms } => {
+                    println!("[tts-progress] stage=file_written chunk={}/{} bytes_written={} elapsed_ms={} path={}", index + 1, total, bytes_written, elapsed_ms, file_path);
+                    update_working(&progress_app, "translate", format!("Translated chunk {}/{} written. Waiting for ordered playback …", index + 1, total));
+                }
+                TtsProgress::ChunkPlaybackStarted { index, total, file_path } => {
+                    println!("[tts-progress] stage=playback_start chunk={}/{} path={}", index + 1, total, file_path);
+                    update_working(&progress_app, "translate", format!("Playing translated chunk {}/{} …", index + 1, total));
+                }
+                TtsProgress::ChunkPlaybackFinished { index, total, elapsed_ms } => {
+                    println!("[tts-progress] stage=playback_end chunk={}/{} elapsed_ms={}", index + 1, total, elapsed_ms);
+                    update_working(&progress_app, "translate", format!("Finished translated chunk {}/{} playback ({} ms).", index + 1, total, elapsed_ms));
+                }
+            });
+
+            let tts_started = Instant::now();
+            println!("[hotkey] action=translate phase=tts_pipeline_start elapsed_ms={} format={}", overall_started.elapsed().as_millis(), settings.tts_format);
+            let speech = speak_text_with_progress(
+                SpeakTextOptions {
+                    text: Some(translation.text.clone()),
+                    voice: None,
                     model: None,
-                }),
-                app_handle.state::<SettingsState>(),
+                    format: Some(settings.tts_format.clone()),
+                    autoplay: Some(true),
+                    max_chunk_chars: None,
+                    max_parallel_requests: Some(3),
+                    first_chunk_leading_silence_ms: Some(settings.first_chunk_leading_silence_ms),
+                },
+                &settings,
+                Some(progress),
             );
 
             let state = app_handle.state::<HotkeyState>();
-            match result {
-                Ok(result) => state.update(&app_handle, |snapshot| {
+            match speech {
+                Ok(speech) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
                     snapshot.message = format!(
-                        "Translation finished to {} and playback started automatically as {}.",
-                        result.translation.target_language,
-                        result.speech.format.to_uppercase()
+                        "Translate run finished in {} ms. Translation took {} ms, TTS produced {} chunk(s), and playback completed in order.",
+                        overall_started.elapsed().as_millis(),
+                        translation_started.elapsed().as_millis(),
+                        speech.chunk_count
                     );
                     snapshot.last_action = Some("translate".to_string());
-                    snapshot.last_captured_text = Some(result.captured_text);
-                    snapshot.last_translation_target_language = Some(result.translation.target_language.clone());
-                    snapshot.last_translation_text = Some(result.translation.text);
-                    snapshot.last_audio_path = Some(result.speech.file_path);
-                    snapshot.last_audio_output_directory = Some(result.speech.output_directory);
-                    snapshot.last_audio_chunk_count = Some(result.speech.chunk_count);
+                    snapshot.last_captured_text = Some(capture.text);
+                    snapshot.last_translation_target_language = Some(translation.target_language.clone());
+                    snapshot.last_translation_text = Some(translation.text);
+                    snapshot.last_audio_path = Some(speech.file_path);
+                    snapshot.last_audio_output_directory = Some(speech.output_directory);
+                    snapshot.last_audio_chunk_count = Some(speech.chunk_count);
                 }),
                 Err(error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "error";
-                    snapshot.message = error;
+                    snapshot.message = format!("Translated TTS failed after {} ms: {error}", tts_started.elapsed().as_millis());
                     snapshot.last_action = Some("translate".to_string());
+                    snapshot.last_captured_text = Some(capture.text.clone());
+                    snapshot.last_translation_target_language = Some(translation.target_language.clone());
+                    snapshot.last_translation_text = Some(translation.text.clone());
                 }),
             }
 
+            println!("[hotkey] action=translate phase=complete total_ms={}", overall_started.elapsed().as_millis());
             finish_run(&app_handle);
         });
     }
