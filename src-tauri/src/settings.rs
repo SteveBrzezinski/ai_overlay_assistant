@@ -3,6 +3,8 @@ use std::sync::Mutex;
 
 pub const DEFAULT_SPEAK_HOTKEY: &str = "Ctrl+Shift+Space";
 pub const DEFAULT_TRANSLATE_HOTKEY: &str = "Ctrl+Shift+T";
+pub const DEFAULT_PAUSE_RESUME_HOTKEY: &str = "Ctrl+Shift+P";
+pub const DEFAULT_CANCEL_HOTKEY: &str = "Ctrl+Shift+X";
 pub const SETTINGS_EVENT: &str = "settings-updated";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
