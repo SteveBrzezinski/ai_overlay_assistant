@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, OnceLock,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -483,7 +483,6 @@ impl SpeechProvider for OpenAiSpeechProvider {
 
 struct LiveSpeechPipeline {
     api_key: String,
-    client: reqwest::blocking::Client,
 }
 
 struct RealtimeSpeechPipeline {
@@ -531,15 +530,24 @@ impl NaturalizedLivePlaybackState {
     }
 }
 
+fn build_live_http_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_millis(LIVE_CONNECT_TIMEOUT_MS))
+        .timeout(Duration::from_millis(LIVE_REQUEST_TIMEOUT_MS))
+        .pool_max_idle_per_host(4)
+        .build()
+        .map_err(|err| format!("Failed to build streaming HTTP client: {err}"))
+}
+
+fn shared_live_http_client() -> Result<&'static reqwest::blocking::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
+    CLIENT.get_or_init(build_live_http_client).as_ref().map_err(|err| err.clone())
+}
+
 impl LiveSpeechPipeline {
     fn new(api_key: String) -> Result<Self, String> {
-        let client = reqwest::blocking::Client::builder()
-            .connect_timeout(Duration::from_millis(LIVE_CONNECT_TIMEOUT_MS))
-            .timeout(Duration::from_millis(LIVE_REQUEST_TIMEOUT_MS))
-            .build()
-            .map_err(|err| format!("Failed to build streaming HTTP client: {err}"))?;
-
-        Ok(Self { api_key, client })
+        let _ = shared_live_http_client()?;
+        Ok(Self { api_key })
     }
 }
 
@@ -1923,19 +1931,47 @@ impl LiveSpeechPipeline {
             );
         }
 
-        let mut response = self
-            .client
-            .post("https://api.openai.com/v1/audio/speech")
-            .bearer_auth(&self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&OpenAiSpeechRequest {
-                model: &options.model,
-                voice: &options.voice,
-                input: text,
-                response_format: &options.transport_format,
-            })
-            .send()
-            .map_err(|err| format!("OpenAI live speech request failed: {err}"))?;
+        let live_request_started = Instant::now();
+        let request_body = OpenAiSpeechRequest {
+            model: &options.model,
+            voice: &options.voice,
+            input: text,
+            response_format: &options.transport_format,
+        };
+
+        let send_live_request = |client: &reqwest::blocking::Client| {
+            client
+                .post("https://api.openai.com/v1/audio/speech")
+                .bearer_auth(&self.api_key)
+                .header("Content-Type", "application/json")
+                .json(&request_body)
+                .send()
+        };
+
+        let mut response = match shared_live_http_client().and_then(|client| {
+            send_live_request(client)
+                .map_err(|err| format!("OpenAI live speech request failed: {err}"))
+        }) {
+            Ok(response) => response,
+            Err(primary_error) => {
+                eprintln!(
+                    "[tts] live_request_retry primary_error={} retrying_with_fresh_client=true",
+                    primary_error
+                );
+                let fresh_client = build_live_http_client()?;
+                send_live_request(&fresh_client).map_err(|retry_error| {
+                    format!(
+                        "OpenAI live speech request failed: {retry_error} (retry after pooled-client failure: {primary_error})"
+                    )
+                })?
+            }
+        };
+
+        println!(
+            "[tts] live_request_headers_received latency_ms={} status={}",
+            millis_u64(live_request_started.elapsed()),
+            response.status()
+        );
 
         if let Some(run_access) = &run_access {
             run_access.check_cancelled()?;

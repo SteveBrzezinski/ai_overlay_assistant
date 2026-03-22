@@ -513,7 +513,7 @@ mod windows_impl {
             });
 
             let capture = capture_selected_text(Some(CaptureOptions {
-                copy_delay_ms: Some(140),
+                copy_delay_ms: Some(100),
                 restore_clipboard: Some(true),
             }));
 
@@ -638,7 +638,7 @@ mod windows_impl {
             });
 
             let capture = capture_selected_text(Some(CaptureOptions {
-                copy_delay_ms: Some(140),
+                copy_delay_ms: Some(100),
                 restore_clipboard: Some(true),
             }));
 

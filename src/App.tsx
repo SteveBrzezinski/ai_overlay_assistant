@@ -1,4 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
+
+ type RunHistoryEntry = {
+  id: string;
+  recordedAtMs: number;
+  state: string;
+  message: string;
+  mode: string;
+  requestedMode: string;
+  sessionStrategy: string;
+  captureDurationMs: number | null;
+  captureToTtsStartMs: number | null;
+  ttsToFirstAudioMs: number | null;
+  firstAudioToPlaybackMs: number | null;
+  hotkeyToFirstAudioMs: number | null;
+  hotkeyToFirstPlaybackMs: number | null;
+};
 import {
   captureAndSpeak,
   captureAndTranslate,
@@ -45,6 +61,42 @@ function formatTimestamp(value?: number | null): string {
   return new Date(value).toLocaleTimeString();
 }
 
+function buildRunHistoryEntry(status: HotkeyStatus): RunHistoryEntry | null {
+  if (!['success', 'error', 'idle'].includes(status.state)) {
+    return null;
+  }
+
+  if (!status.lastAction || status.lastAction !== 'speak') {
+    return null;
+  }
+
+  if (
+    !status.hotkeyToFirstPlaybackMs &&
+    !status.hotkeyToFirstAudioMs &&
+    !status.captureDurationMs &&
+    !status.ttsToFirstAudioMs &&
+    !status.message
+  ) {
+    return null;
+  }
+
+  return {
+    id: `${status.sessionId ?? 'no-session'}-${status.message}`,
+    recordedAtMs: Date.now(),
+    state: status.state,
+    message: status.message,
+    mode: status.activeTtsMode ?? '',
+    requestedMode: status.requestedTtsMode ?? '',
+    sessionStrategy: status.sessionStrategy ?? '',
+    captureDurationMs: status.captureDurationMs ?? null,
+    captureToTtsStartMs: status.captureToTtsStartMs ?? null,
+    ttsToFirstAudioMs: status.ttsToFirstAudioMs ?? null,
+    firstAudioToPlaybackMs: status.firstAudioToPlaybackMs ?? null,
+    hotkeyToFirstAudioMs: status.hotkeyToFirstAudioMs ?? null,
+    hotkeyToFirstPlaybackMs: status.hotkeyToFirstPlaybackMs ?? null,
+  };
+}
+
 export default function App() {
   const [appStatus, setAppStatus] = useState('Loading status...');
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyStatus>(fallbackHotkeyStatus);
@@ -76,6 +128,7 @@ export default function App() {
   const [captureToTtsStartMs, setCaptureToTtsStartMs] = useState<number | null>(null);
   const [ttsToFirstAudioMs, setTtsToFirstAudioMs] = useState<number | null>(null);
   const [firstAudioToPlaybackMs, setFirstAudioToPlaybackMs] = useState<number | null>(null);
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
 
@@ -145,6 +198,16 @@ export default function App() {
       setTtsToFirstAudioMs(status.ttsToFirstAudioMs ?? null);
       setFirstAudioToPlaybackMs(status.firstAudioToPlaybackMs ?? null);
       setUiState(status.state === 'working' ? 'working' : status.state === 'error' ? 'error' : status.state === 'success' ? 'success' : 'idle');
+
+      const historyEntry = buildRunHistoryEntry(status);
+      if (historyEntry) {
+        setRunHistory((current) => {
+          if (current.some((entry) => entry.id === historyEntry.id)) {
+            return current;
+          }
+          return [historyEntry, ...current].slice(0, 8);
+        });
+      }
     }).then((cleanup) => {
       unlisten = cleanup;
     });
@@ -202,7 +265,7 @@ export default function App() {
     setMessage('Local test run: reading selected text...');
     try {
       const result = await captureAndSpeak(
-        { copyDelayMs: 140, restoreClipboard: true },
+        { copyDelayMs: 100, restoreClipboard: true },
         {
           autoplay: true,
           format: activeSettings.ttsFormat,
@@ -249,7 +312,7 @@ export default function App() {
     setMessage(`Local test run: translating selected text to ${activeSettings.translationTargetLanguage}...`);
     try {
       const result = await captureAndTranslate(
-        { copyDelayMs: 140, restoreClipboard: true },
+        { copyDelayMs: 100, restoreClipboard: true },
         { targetLanguage: activeSettings.translationTargetLanguage },
       );
       setUiState('success');
@@ -509,6 +572,28 @@ export default function App() {
           ) : null}
           {lastAudioPath ? <div className="result-block"><span className="info-label">Audio output</span><code>{lastAudioChunkCount > 1 ? lastAudioOutputDirectory : lastAudioPath}</code></div> : null}
         </section>
+
+        {runHistory.length ? (
+          <section className="instructions-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+              <span className="info-label">Recent run history</span>
+              <button type="button" className="secondary-button" onClick={() => setRunHistory([])}>
+                Clear history
+              </button>
+            </div>
+            <div className="result-block">
+              {runHistory.map((entry) => (
+                <div key={entry.id} style={{ padding: '0.75rem 0', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <p><strong>{entry.mode || 'unknown'}</strong>{entry.requestedMode ? ` · requested ${entry.requestedMode}` : ''}{entry.sessionStrategy ? ` · ${entry.sessionStrategy}` : ''}</p>
+                  <p>{new Date(entry.recordedAtMs).toLocaleTimeString()} · {entry.message}</p>
+                  <p>
+                    hotkey→audio {entry.hotkeyToFirstPlaybackMs ?? '—'} ms · capture {entry.captureDurationMs ?? '—'} ms · capture→tts {entry.captureToTtsStartMs ?? '—'} ms · tts→audio {entry.ttsToFirstAudioMs ?? '—'} ms · audio→playback {entry.firstAudioToPlaybackMs ?? '—'} ms
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="instructions-card">
           <span className="info-label">Usage</span>
