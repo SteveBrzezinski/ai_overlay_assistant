@@ -9,6 +9,7 @@ export type CaptureOptions = {
 export type SpeakOptions = {
   autoplay?: boolean;
   format?: 'wav' | 'mp3';
+  mode?: 'classic' | 'live' | 'realtime';
   maxChunkChars?: number;
   maxParallelRequests?: number;
   model?: string;
@@ -23,6 +24,8 @@ export type TranslateOptions = {
 };
 
 export type AppSettings = {
+  ttsMode: 'classic' | 'live' | 'realtime';
+  realtimeAllowLiveFallback: boolean;
   ttsFormat: 'wav' | 'mp3';
   firstChunkLeadingSilenceMs: number;
   translationTargetLanguage: string;
@@ -46,8 +49,18 @@ export type CaptureAndSpeakResult = {
     filePath: string;
     format: string;
     model: string;
+    mode: string;
+    requestedMode: string;
+    sessionId: string;
+    sessionStrategy: string;
+    fallbackReason?: string | null;
+    supportsPersistentSession: boolean;
     outputDirectory: string;
+    transportFormat: string;
     voice: string;
+    firstAudioReceivedAtMs?: number | null;
+    firstAudioPlaybackStartedAtMs?: number | null;
+    startLatencyMs?: number | null;
   };
 };
 
@@ -68,8 +81,18 @@ export type CaptureAndTranslateResult = {
     filePath: string;
     format: string;
     model: string;
+    mode: string;
+    requestedMode: string;
+    sessionId: string;
+    sessionStrategy: string;
+    fallbackReason?: string | null;
+    supportsPersistentSession: boolean;
     outputDirectory: string;
+    transportFormat: string;
     voice: string;
+    firstAudioReceivedAtMs?: number | null;
+    firstAudioPlaybackStartedAtMs?: number | null;
+    startLatencyMs?: number | null;
   };
 };
 
@@ -87,6 +110,24 @@ export type HotkeyStatus = {
   lastAudioPath?: string | null;
   lastAudioOutputDirectory?: string | null;
   lastAudioChunkCount?: number | null;
+  activeTtsMode?: string | null;
+  requestedTtsMode?: string | null;
+  sessionStrategy?: string | null;
+  sessionId?: string | null;
+  sessionFallbackReason?: string | null;
+  hotkeyStartedAtMs?: number | null;
+  captureStartedAtMs?: number | null;
+  captureFinishedAtMs?: number | null;
+  ttsStartedAtMs?: number | null;
+  firstAudioReceivedAtMs?: number | null;
+  firstAudioPlaybackStartedAtMs?: number | null;
+  startLatencyMs?: number | null;
+  hotkeyToFirstAudioMs?: number | null;
+  hotkeyToFirstPlaybackMs?: number | null;
+  captureDurationMs?: number | null;
+  captureToTtsStartMs?: number | null;
+  ttsToFirstAudioMs?: number | null;
+  firstAudioToPlaybackMs?: number | null;
   lastTranslationText?: string | null;
   lastTranslationTargetLanguage?: string | null;
 };
@@ -133,6 +174,7 @@ export async function captureAndSpeak(
     speakOptions: {
       autoplay: speakOptions.autoplay ?? true,
       format: speakOptions.format,
+      mode: speakOptions.mode,
       maxChunkChars: speakOptions.maxChunkChars,
       maxParallelRequests: speakOptions.maxParallelRequests,
       model: speakOptions.model,
