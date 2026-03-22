@@ -28,12 +28,22 @@ const fallbackHotkeyStatus: HotkeyStatus = {
 };
 
 const fallbackSettings: AppSettings = {
+  ttsMode: 'classic',
+  realtimeAllowLiveFallback: false,
   ttsFormat: 'wav',
   firstChunkLeadingSilenceMs: 180,
   translationTargetLanguage: 'en',
   playbackSpeed: 1,
   openaiApiKey: '',
 };
+
+function formatTimestamp(value?: number | null): string {
+  if (!value) {
+    return 'Not recorded';
+  }
+
+  return new Date(value).toLocaleTimeString();
+}
 
 export default function App() {
   const [appStatus, setAppStatus] = useState('Loading status...');
@@ -48,6 +58,24 @@ export default function App() {
   const [lastAudioPath, setLastAudioPath] = useState('');
   const [lastAudioOutputDirectory, setLastAudioOutputDirectory] = useState('');
   const [lastAudioChunkCount, setLastAudioChunkCount] = useState(0);
+  const [lastTtsMode, setLastTtsMode] = useState('');
+  const [lastRequestedTtsMode, setLastRequestedTtsMode] = useState('');
+  const [lastSessionStrategy, setLastSessionStrategy] = useState('');
+  const [lastSessionId, setLastSessionId] = useState('');
+  const [lastSessionFallbackReason, setLastSessionFallbackReason] = useState('');
+  const [hotkeyStartedAtMs, setHotkeyStartedAtMs] = useState<number | null>(null);
+  const [captureStartedAtMs, setCaptureStartedAtMs] = useState<number | null>(null);
+  const [captureFinishedAtMs, setCaptureFinishedAtMs] = useState<number | null>(null);
+  const [ttsStartedAtMs, setTtsStartedAtMs] = useState<number | null>(null);
+  const [firstAudioReceivedAtMs, setFirstAudioReceivedAtMs] = useState<number | null>(null);
+  const [firstAudioPlaybackStartedAtMs, setFirstAudioPlaybackStartedAtMs] = useState<number | null>(null);
+  const [startLatencyMs, setStartLatencyMs] = useState<number | null>(null);
+  const [hotkeyToFirstAudioMs, setHotkeyToFirstAudioMs] = useState<number | null>(null);
+  const [hotkeyToFirstPlaybackMs, setHotkeyToFirstPlaybackMs] = useState<number | null>(null);
+  const [captureDurationMs, setCaptureDurationMs] = useState<number | null>(null);
+  const [captureToTtsStartMs, setCaptureToTtsStartMs] = useState<number | null>(null);
+  const [ttsToFirstAudioMs, setTtsToFirstAudioMs] = useState<number | null>(null);
+  const [firstAudioToPlaybackMs, setFirstAudioToPlaybackMs] = useState<number | null>(null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
 
@@ -65,6 +93,24 @@ export default function App() {
         setLastAudioPath(hotkey.lastAudioPath ?? '');
         setLastAudioOutputDirectory(hotkey.lastAudioOutputDirectory ?? '');
         setLastAudioChunkCount(hotkey.lastAudioChunkCount ?? 0);
+        setLastTtsMode(hotkey.activeTtsMode ?? '');
+        setLastRequestedTtsMode(hotkey.requestedTtsMode ?? '');
+        setLastSessionStrategy(hotkey.sessionStrategy ?? '');
+        setLastSessionId(hotkey.sessionId ?? '');
+        setLastSessionFallbackReason(hotkey.sessionFallbackReason ?? '');
+        setHotkeyStartedAtMs(hotkey.hotkeyStartedAtMs ?? null);
+        setCaptureStartedAtMs(hotkey.captureStartedAtMs ?? null);
+        setCaptureFinishedAtMs(hotkey.captureFinishedAtMs ?? null);
+        setTtsStartedAtMs(hotkey.ttsStartedAtMs ?? null);
+        setFirstAudioReceivedAtMs(hotkey.firstAudioReceivedAtMs ?? null);
+        setFirstAudioPlaybackStartedAtMs(hotkey.firstAudioPlaybackStartedAtMs ?? null);
+        setStartLatencyMs(hotkey.startLatencyMs ?? null);
+        setHotkeyToFirstAudioMs(hotkey.hotkeyToFirstAudioMs ?? null);
+        setHotkeyToFirstPlaybackMs(hotkey.hotkeyToFirstPlaybackMs ?? null);
+        setCaptureDurationMs(hotkey.captureDurationMs ?? null);
+        setCaptureToTtsStartMs(hotkey.captureToTtsStartMs ?? null);
+        setTtsToFirstAudioMs(hotkey.ttsToFirstAudioMs ?? null);
+        setFirstAudioToPlaybackMs(hotkey.firstAudioToPlaybackMs ?? null);
       })
       .catch((error: unknown) => {
         const text = error instanceof Error ? error.message : String(error);
@@ -80,6 +126,24 @@ export default function App() {
       setLastAudioPath(status.lastAudioPath ?? '');
       setLastAudioOutputDirectory(status.lastAudioOutputDirectory ?? '');
       setLastAudioChunkCount(status.lastAudioChunkCount ?? 0);
+      setLastTtsMode(status.activeTtsMode ?? '');
+      setLastRequestedTtsMode(status.requestedTtsMode ?? '');
+      setLastSessionStrategy(status.sessionStrategy ?? '');
+      setLastSessionId(status.sessionId ?? '');
+      setLastSessionFallbackReason(status.sessionFallbackReason ?? '');
+      setHotkeyStartedAtMs(status.hotkeyStartedAtMs ?? null);
+      setCaptureStartedAtMs(status.captureStartedAtMs ?? null);
+      setCaptureFinishedAtMs(status.captureFinishedAtMs ?? null);
+      setTtsStartedAtMs(status.ttsStartedAtMs ?? null);
+      setFirstAudioReceivedAtMs(status.firstAudioReceivedAtMs ?? null);
+      setFirstAudioPlaybackStartedAtMs(status.firstAudioPlaybackStartedAtMs ?? null);
+      setStartLatencyMs(status.startLatencyMs ?? null);
+      setHotkeyToFirstAudioMs(status.hotkeyToFirstAudioMs ?? null);
+      setHotkeyToFirstPlaybackMs(status.hotkeyToFirstPlaybackMs ?? null);
+      setCaptureDurationMs(status.captureDurationMs ?? null);
+      setCaptureToTtsStartMs(status.captureToTtsStartMs ?? null);
+      setTtsToFirstAudioMs(status.ttsToFirstAudioMs ?? null);
+      setFirstAudioToPlaybackMs(status.firstAudioToPlaybackMs ?? null);
       setUiState(status.state === 'working' ? 'working' : status.state === 'error' ? 'error' : status.state === 'success' ? 'success' : 'idle');
     }).then((cleanup) => {
       unlisten = cleanup;
@@ -94,6 +158,7 @@ export default function App() {
     () => JSON.stringify(settings) !== JSON.stringify(savedSettings),
     [savedSettings, settings],
   );
+  const showLiveSpeedWarning = ['live', 'realtime'].includes(settings.ttsMode) && Math.abs(settings.playbackSpeed - 1) >= 0.01;
 
   const persistSettings = async (
     next: AppSettings,
@@ -141,6 +206,7 @@ export default function App() {
         {
           autoplay: true,
           format: activeSettings.ttsFormat,
+          mode: activeSettings.ttsMode,
           maxParallelRequests: 3,
           voice: 'alloy',
           firstChunkLeadingSilenceMs: activeSettings.firstChunkLeadingSilenceMs,
@@ -152,8 +218,16 @@ export default function App() {
       setLastAudioPath(result.speech.filePath);
       setLastAudioOutputDirectory(result.speech.outputDirectory);
       setLastAudioChunkCount(result.speech.chunkCount);
+      setLastTtsMode(result.speech.mode);
+      setLastRequestedTtsMode(result.speech.requestedMode);
+      setLastSessionStrategy(result.speech.sessionStrategy);
+      setLastSessionId(result.speech.sessionId);
+      setLastSessionFallbackReason(result.speech.fallbackReason ?? '');
+      setFirstAudioReceivedAtMs(result.speech.firstAudioReceivedAtMs ?? null);
+      setFirstAudioPlaybackStartedAtMs(result.speech.firstAudioPlaybackStartedAtMs ?? null);
+      setStartLatencyMs(result.speech.startLatencyMs ?? null);
       setMessage(
-        `Audio ready: ${result.speech.chunkCount} chunk(s), ${result.speech.format.toUpperCase()}, ${activeSettings.firstChunkLeadingSilenceMs} ms lead-in, ${activeSettings.playbackSpeed.toFixed(1)}x playback.`,
+        `Audio ready: ${result.speech.mode} mode, ${result.speech.chunkCount} chunk(s), ${result.speech.format.toUpperCase()} output${result.speech.startLatencyMs ? `, first audible audio after ${result.speech.startLatencyMs} ms` : ''}.`,
       );
     } catch (error: unknown) {
       const text = error instanceof Error ? error.message : String(error);
@@ -181,7 +255,20 @@ export default function App() {
       setUiState('success');
       setCapturedPreview(result.capturedText);
       setTranslatedPreview(result.translation.text);
-      setMessage(`Translation completed (${result.translation.targetLanguage}). The translated text is shown in the UI.`);
+      setLastAudioPath(result.speech.filePath);
+      setLastAudioOutputDirectory(result.speech.outputDirectory);
+      setLastAudioChunkCount(result.speech.chunkCount);
+      setLastTtsMode(result.speech.mode);
+      setLastRequestedTtsMode(result.speech.requestedMode);
+      setLastSessionStrategy(result.speech.sessionStrategy);
+      setLastSessionId(result.speech.sessionId);
+      setLastSessionFallbackReason(result.speech.fallbackReason ?? '');
+      setFirstAudioReceivedAtMs(result.speech.firstAudioReceivedAtMs ?? null);
+      setFirstAudioPlaybackStartedAtMs(result.speech.firstAudioPlaybackStartedAtMs ?? null);
+      setStartLatencyMs(result.speech.startLatencyMs ?? null);
+      setMessage(
+        `Translation completed (${result.translation.targetLanguage}) in ${result.speech.mode} mode${result.speech.startLatencyMs ? `, first audible audio after ${result.speech.startLatencyMs} ms` : ''}.`,
+      );
     } catch (error: unknown) {
       const text = error instanceof Error ? error.message : String(error);
       setUiState('error');
@@ -210,6 +297,7 @@ export default function App() {
     () => [
       { label: 'Global speak hotkey', value: `${hotkeyStatus.accelerator} · ${hotkeyStatus.registered ? 'active' : 'inactive'}` },
       { label: 'Global translate hotkey', value: `${hotkeyStatus.translateAccelerator} · ${hotkeyStatus.registered ? 'active' : 'inactive'}` },
+      { label: 'Speech mode', value: settings.ttsMode },
       { label: 'Speech defaults', value: `${settings.ttsFormat.toUpperCase()} · ${settings.firstChunkLeadingSilenceMs} ms lead-in · ${settings.playbackSpeed.toFixed(1)}x` },
       { label: 'Translation target', value: settings.translationTargetLanguage },
       { label: 'Current status', value: appStatus },
@@ -289,11 +377,35 @@ export default function App() {
 
           <div className="settings-grid">
             <label className="settings-field">
+              <span className="info-label">Speech mode</span>
+              <select value={settings.ttsMode} onChange={(event) => setSettings({ ...settings, ttsMode: event.target.value as AppSettings['ttsMode'] })}>
+                <option value="classic">Classic / stable</option>
+                <option value="live">Live / session-ready streaming</option>
+                <option value="realtime">Realtime / experimental</option>
+              </select>
+              <span className="field-note">Classic keeps the chunked file pipeline. Live uses the newer session-oriented streaming path. Realtime uses the OpenAI Realtime WebSocket audio path directly and now exposes its own startup errors by default.</span>
+            </label>
+
+            <label className="settings-field settings-field--wide">
+              <span className="info-label">Realtime debug fallback</span>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={settings.realtimeAllowLiveFallback}
+                  onChange={(event) => setSettings({ ...settings, realtimeAllowLiveFallback: event.target.checked })}
+                />
+                <span>Allow temporary fallback from realtime to live on startup failure</span>
+              </label>
+              <span className="field-note">Default is off so real Realtime connect/session.update/response.create/audio errors stay visible. Turn this on only if you explicitly want the old rescue path while debugging.</span>
+            </label>
+
+            <label className="settings-field">
               <span className="info-label">Audio format</span>
               <select value={settings.ttsFormat} onChange={(event) => setSettings({ ...settings, ttsFormat: event.target.value as AppSettings['ttsFormat'] })}>
                 <option value="wav">WAV (Default)</option>
                 <option value="mp3">MP3</option>
               </select>
+              <span className="field-note">This applies to the classic pipeline. Live and realtime stream PCM internally and store the finished file as WAV.</span>
             </label>
 
             <label className="settings-field">
@@ -323,8 +435,24 @@ export default function App() {
                 />
                 <output>{settings.playbackSpeed.toFixed(1)}x</output>
               </div>
-              <span className="field-note">0.5x is slower, 1.0x is default, 2.0x is faster. Playback now uses a pitch-preserving time-stretch path where practical, but extreme values can still introduce some artifacts.</span>
+              <span className="field-note">0.5x is slower, 1.0x is default, 2.0x is faster. Classic uses the pitch-friendlier time-stretch path; live keeps the fastest direct stream at 1.0x and uses a more buffered naturalized path for non-default speed.</span>
             </label>
+
+            {showLiveSpeedWarning ? (
+              <div className="settings-warning settings-field--wide" role="status" aria-live="polite">
+                <strong>Streaming speed adjustment adds buffering</strong>
+                <p>Non-default playback speed in live or realtime mode may require additional buffering and processing to keep the voice more natural.</p>
+                <p>This can increase startup latency and local processing overhead. The current implementation does not add extra API requests.</p>
+              </div>
+            ) : null}
+
+            {settings.ttsMode === 'realtime' ? (
+              <div className="settings-warning settings-field--wide" role="status" aria-live="polite">
+                <strong>Realtime mode is experimental</strong>
+                <p>The app tries OpenAI Realtime audio over WebSocket and starts playback as soon as audio deltas arrive.</p>
+                <p>Fallback to live is disabled by default so connect/session.update/response.create/first-audio failures remain visible while debugging. You can re-enable it above if needed.</p>
+              </div>
+            ) : null}
 
             <label className="settings-field settings-field--wide">
               <span className="info-label">OpenAI API key</span>
@@ -347,6 +475,38 @@ export default function App() {
           </div>
           {capturedPreview ? <div className="result-block"><span className="info-label">Captured text</span><p>{capturedPreview}</p></div> : null}
           {translatedPreview ? <div className="result-block"><span className="info-label">Translation</span><p>{translatedPreview}</p></div> : null}
+          {lastTtsMode ? <div className="result-block"><span className="info-label">Resolved TTS mode</span><strong>{lastTtsMode}</strong></div> : null}
+          {lastRequestedTtsMode ? <div className="result-block"><span className="info-label">Requested TTS mode</span><strong>{lastRequestedTtsMode}</strong></div> : null}
+          {lastSessionStrategy ? <div className="result-block"><span className="info-label">Session strategy</span><p>{lastSessionStrategy}</p><code>{lastSessionId}</code></div> : null}
+          {lastSessionFallbackReason ? <div className="result-block"><span className="info-label">Session fallback</span><p>{lastSessionFallbackReason}</p></div> : null}
+          {startLatencyMs !== null ? <div className="result-block"><span className="info-label">Visible start latency</span><strong>{startLatencyMs} ms</strong></div> : null}
+          {(hotkeyToFirstPlaybackMs !== null || hotkeyToFirstAudioMs !== null) ? (
+            <div className="result-block">
+              <span className="info-label">End-to-end latency</span>
+              {hotkeyToFirstAudioMs !== null ? <p>Hotkey → first audio received: {hotkeyToFirstAudioMs} ms</p> : null}
+              {hotkeyToFirstPlaybackMs !== null ? <p>Hotkey → first audible playback: {hotkeyToFirstPlaybackMs} ms</p> : null}
+            </div>
+          ) : null}
+          {(captureDurationMs !== null || captureToTtsStartMs !== null || ttsToFirstAudioMs !== null || firstAudioToPlaybackMs !== null) ? (
+            <div className="result-block">
+              <span className="info-label">Latency breakdown</span>
+              {captureDurationMs !== null ? <p>Capture duration: {captureDurationMs} ms</p> : null}
+              {captureToTtsStartMs !== null ? <p>Capture → TTS start: {captureToTtsStartMs} ms</p> : null}
+              {ttsToFirstAudioMs !== null ? <p>TTS start → first audio: {ttsToFirstAudioMs} ms</p> : null}
+              {firstAudioToPlaybackMs !== null ? <p>First audio → audible playback: {firstAudioToPlaybackMs} ms</p> : null}
+            </div>
+          ) : null}
+          {(hotkeyStartedAtMs || captureStartedAtMs || captureFinishedAtMs || ttsStartedAtMs || firstAudioReceivedAtMs || firstAudioPlaybackStartedAtMs) ? (
+            <div className="result-block">
+              <span className="info-label">Audio start timeline</span>
+              {hotkeyStartedAtMs ? <p>Hotkey received: {formatTimestamp(hotkeyStartedAtMs)}</p> : null}
+              {captureStartedAtMs ? <p>Capture started: {formatTimestamp(captureStartedAtMs)}</p> : null}
+              {captureFinishedAtMs ? <p>Capture finished: {formatTimestamp(captureFinishedAtMs)}</p> : null}
+              {ttsStartedAtMs ? <p>TTS pipeline started: {formatTimestamp(ttsStartedAtMs)}</p> : null}
+              {firstAudioReceivedAtMs ? <p>First audio received: {formatTimestamp(firstAudioReceivedAtMs)}</p> : null}
+              {firstAudioPlaybackStartedAtMs ? <p>First audible playback: {formatTimestamp(firstAudioPlaybackStartedAtMs)}</p> : null}
+            </div>
+          ) : null}
           {lastAudioPath ? <div className="result-block"><span className="info-label">Audio output</span><code>{lastAudioChunkCount > 1 ? lastAudioOutputDirectory : lastAudioPath}</code></div> : null}
         </section>
 

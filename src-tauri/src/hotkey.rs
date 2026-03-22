@@ -3,7 +3,10 @@ use crate::{
     settings::{DEFAULT_SPEAK_HOTKEY, DEFAULT_TRANSLATE_HOTKEY},
 };
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const DEFAULT_PAUSE_RESUME_HOTKEY: &str = "Ctrl+Shift+P";
@@ -26,6 +29,24 @@ pub struct HotkeyStatusPayload {
     pub last_audio_path: Option<String>,
     pub last_audio_output_directory: Option<String>,
     pub last_audio_chunk_count: Option<usize>,
+    pub active_tts_mode: Option<String>,
+    pub requested_tts_mode: Option<String>,
+    pub session_strategy: Option<String>,
+    pub session_id: Option<String>,
+    pub session_fallback_reason: Option<String>,
+    pub hotkey_started_at_ms: Option<u64>,
+    pub capture_started_at_ms: Option<u64>,
+    pub capture_finished_at_ms: Option<u64>,
+    pub tts_started_at_ms: Option<u64>,
+    pub first_audio_received_at_ms: Option<u64>,
+    pub first_audio_playback_started_at_ms: Option<u64>,
+    pub start_latency_ms: Option<u64>,
+    pub hotkey_to_first_audio_ms: Option<u64>,
+    pub hotkey_to_first_playback_ms: Option<u64>,
+    pub capture_duration_ms: Option<u64>,
+    pub capture_to_tts_start_ms: Option<u64>,
+    pub tts_to_first_audio_ms: Option<u64>,
+    pub first_audio_to_playback_ms: Option<u64>,
     pub last_translation_text: Option<String>,
     pub last_translation_target_language: Option<String>,
 }
@@ -40,6 +61,24 @@ pub(crate) struct HotkeySnapshot {
     last_audio_path: Option<String>,
     last_audio_output_directory: Option<String>,
     last_audio_chunk_count: Option<usize>,
+    active_tts_mode: Option<String>,
+    requested_tts_mode: Option<String>,
+    session_strategy: Option<String>,
+    session_id: Option<String>,
+    session_fallback_reason: Option<String>,
+    hotkey_started_at_ms: Option<u64>,
+    capture_started_at_ms: Option<u64>,
+    capture_finished_at_ms: Option<u64>,
+    tts_started_at_ms: Option<u64>,
+    first_audio_received_at_ms: Option<u64>,
+    first_audio_playback_started_at_ms: Option<u64>,
+    start_latency_ms: Option<u64>,
+    hotkey_to_first_audio_ms: Option<u64>,
+    hotkey_to_first_playback_ms: Option<u64>,
+    capture_duration_ms: Option<u64>,
+    capture_to_tts_start_ms: Option<u64>,
+    tts_to_first_audio_ms: Option<u64>,
+    first_audio_to_playback_ms: Option<u64>,
     last_translation_text: Option<String>,
     last_translation_target_language: Option<String>,
 }
@@ -80,6 +119,24 @@ impl HotkeyState {
             last_audio_path: snapshot.last_audio_path.clone(),
             last_audio_output_directory: snapshot.last_audio_output_directory.clone(),
             last_audio_chunk_count: snapshot.last_audio_chunk_count,
+            active_tts_mode: snapshot.active_tts_mode.clone(),
+            requested_tts_mode: snapshot.requested_tts_mode.clone(),
+            session_strategy: snapshot.session_strategy.clone(),
+            session_id: snapshot.session_id.clone(),
+            session_fallback_reason: snapshot.session_fallback_reason.clone(),
+            hotkey_started_at_ms: snapshot.hotkey_started_at_ms,
+            capture_started_at_ms: snapshot.capture_started_at_ms,
+            capture_finished_at_ms: snapshot.capture_finished_at_ms,
+            tts_started_at_ms: snapshot.tts_started_at_ms,
+            first_audio_received_at_ms: snapshot.first_audio_received_at_ms,
+            first_audio_playback_started_at_ms: snapshot.first_audio_playback_started_at_ms,
+            start_latency_ms: snapshot.start_latency_ms,
+            hotkey_to_first_audio_ms: snapshot.hotkey_to_first_audio_ms,
+            hotkey_to_first_playback_ms: snapshot.hotkey_to_first_playback_ms,
+            capture_duration_ms: snapshot.capture_duration_ms,
+            capture_to_tts_start_ms: snapshot.capture_to_tts_start_ms,
+            tts_to_first_audio_ms: snapshot.tts_to_first_audio_ms,
+            first_audio_to_playback_ms: snapshot.first_audio_to_playback_ms,
             last_translation_text: snapshot.last_translation_text.clone(),
             last_translation_target_language: snapshot.last_translation_target_language.clone(),
         }
@@ -95,6 +152,57 @@ impl HotkeyState {
         }
         let _ = app.emit(HOTKEY_STATUS_EVENT, self.payload());
     }
+}
+
+fn recompute_timing_metrics(snapshot: &mut HotkeySnapshot) {
+    snapshot.capture_duration_ms = match (snapshot.capture_started_at_ms, snapshot.capture_finished_at_ms) {
+        (Some(started), Some(finished)) => finished.checked_sub(started),
+        _ => None,
+    };
+    snapshot.capture_to_tts_start_ms = match (snapshot.capture_finished_at_ms, snapshot.tts_started_at_ms) {
+        (Some(capture_finished), Some(tts_started)) => tts_started.checked_sub(capture_finished),
+        _ => None,
+    };
+    snapshot.hotkey_to_first_audio_ms = match (snapshot.hotkey_started_at_ms, snapshot.first_audio_received_at_ms) {
+        (Some(hotkey_started), Some(first_audio)) => first_audio.checked_sub(hotkey_started),
+        _ => None,
+    };
+    snapshot.hotkey_to_first_playback_ms = match (snapshot.hotkey_started_at_ms, snapshot.first_audio_playback_started_at_ms) {
+        (Some(hotkey_started), Some(first_playback)) => first_playback.checked_sub(hotkey_started),
+        _ => None,
+    };
+    snapshot.tts_to_first_audio_ms = match (snapshot.tts_started_at_ms, snapshot.first_audio_received_at_ms) {
+        (Some(tts_started), Some(first_audio)) => first_audio.checked_sub(tts_started),
+        _ => None,
+    };
+    snapshot.first_audio_to_playback_ms = match (
+        snapshot.first_audio_received_at_ms,
+        snapshot.first_audio_playback_started_at_ms,
+    ) {
+        (Some(first_audio), Some(first_playback)) => first_playback.checked_sub(first_audio),
+        _ => None,
+    };
+}
+
+fn reset_tts_metrics(snapshot: &mut HotkeySnapshot) {
+    snapshot.active_tts_mode = None;
+    snapshot.requested_tts_mode = None;
+    snapshot.session_strategy = None;
+    snapshot.session_id = None;
+    snapshot.session_fallback_reason = None;
+    snapshot.hotkey_started_at_ms = None;
+    snapshot.capture_started_at_ms = None;
+    snapshot.capture_finished_at_ms = None;
+    snapshot.tts_started_at_ms = None;
+    snapshot.first_audio_received_at_ms = None;
+    snapshot.first_audio_playback_started_at_ms = None;
+    snapshot.start_latency_ms = None;
+    snapshot.hotkey_to_first_audio_ms = None;
+    snapshot.hotkey_to_first_playback_ms = None;
+    snapshot.capture_duration_ms = None;
+    snapshot.capture_to_tts_start_ms = None;
+    snapshot.tts_to_first_audio_ms = None;
+    snapshot.first_audio_to_playback_ms = None;
 }
 
 #[tauri::command]
@@ -115,6 +223,7 @@ pub fn begin_managed_run(
                 snapshot.state = "working";
                 snapshot.last_action = Some(action.to_string());
                 snapshot.message = message.clone();
+                reset_tts_metrics(snapshot);
             });
             Ok(handle)
         }
@@ -300,6 +409,7 @@ mod windows_impl {
                     snapshot.state = "working";
                     snapshot.last_action = Some(action.to_string());
                     snapshot.message = message;
+                    reset_tts_metrics(snapshot);
                 });
                 Some(handle)
             }
@@ -391,13 +501,28 @@ mod windows_impl {
         let app_handle = app.clone();
         thread::spawn(move || {
             let overall_started = Instant::now();
+            let hotkey_started_at_ms = system_time_ms();
             let run_access = run_handle.access();
             run_access.update_phase("capturing_selection");
+
+            let state = app_handle.state::<HotkeyState>();
+            state.update(&app_handle, |snapshot| {
+                snapshot.hotkey_started_at_ms = Some(hotkey_started_at_ms);
+                snapshot.capture_started_at_ms = Some(system_time_ms());
+                recompute_timing_metrics(snapshot);
+            });
 
             let capture = capture_selected_text(Some(CaptureOptions {
                 copy_delay_ms: Some(140),
                 restore_clipboard: Some(true),
             }));
+
+            let capture_finished_at_ms = system_time_ms();
+            let state = app_handle.state::<HotkeyState>();
+            state.update(&app_handle, |snapshot| {
+                snapshot.capture_finished_at_ms = Some(capture_finished_at_ms);
+                recompute_timing_metrics(snapshot);
+            });
 
             let capture = match capture {
                 Ok(capture) if !capture.text.trim().is_empty() => capture,
@@ -430,6 +555,7 @@ mod windows_impl {
                     voice: Some("alloy".to_string()),
                     model: None,
                     format: Some(settings.tts_format.clone()),
+                    mode: Some(settings.tts_mode.clone()),
                     autoplay: Some(true),
                     max_chunk_chars: None,
                     max_parallel_requests: Some(3),
@@ -445,16 +571,31 @@ mod windows_impl {
                 Ok(result) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
                     snapshot.message = format!(
-                        "Speak run finished in {} ms. Generated {} chunk(s) and played them in order as {}.",
+                        "Speak run finished in {} ms. Mode {} produced {} chunk(s) as {}{}{}.",
                         overall_started.elapsed().as_millis(),
+                        result.mode,
                         result.chunk_count,
-                        result.format.to_uppercase()
+                        result.format.to_uppercase(),
+                        format_start_latency_suffix(result.start_latency_ms),
+                        format_hotkey_to_first_playback_suffix(
+                            snapshot.hotkey_started_at_ms,
+                            result.first_audio_playback_started_at_ms,
+                        )
                     );
                     snapshot.last_action = Some("speak".to_string());
                     snapshot.last_captured_text = Some(capture.text);
                     snapshot.last_audio_path = Some(result.file_path);
                     snapshot.last_audio_output_directory = Some(result.output_directory);
                     snapshot.last_audio_chunk_count = Some(result.chunk_count);
+                    snapshot.active_tts_mode = Some(result.mode.clone());
+                    snapshot.requested_tts_mode = Some(result.requested_mode);
+                    snapshot.session_strategy = Some(result.session_strategy);
+                    snapshot.session_id = Some(result.session_id);
+                    snapshot.session_fallback_reason = result.fallback_reason;
+                    snapshot.first_audio_received_at_ms = result.first_audio_received_at_ms;
+                    snapshot.first_audio_playback_started_at_ms = result.first_audio_playback_started_at_ms;
+                    snapshot.start_latency_ms = result.start_latency_ms;
+                    recompute_timing_metrics(snapshot);
                 }),
                 Err(error) if is_cancelled_error(&error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
@@ -485,13 +626,28 @@ mod windows_impl {
         let app_handle = app.clone();
         thread::spawn(move || {
             let overall_started = Instant::now();
+            let hotkey_started_at_ms = system_time_ms();
             let run_access = run_handle.access();
             run_access.update_phase("capturing_selection");
+
+            let state = app_handle.state::<HotkeyState>();
+            state.update(&app_handle, |snapshot| {
+                snapshot.hotkey_started_at_ms = Some(hotkey_started_at_ms);
+                snapshot.capture_started_at_ms = Some(system_time_ms());
+                recompute_timing_metrics(snapshot);
+            });
 
             let capture = capture_selected_text(Some(CaptureOptions {
                 copy_delay_ms: Some(140),
                 restore_clipboard: Some(true),
             }));
+
+            let capture_finished_at_ms = system_time_ms();
+            let state = app_handle.state::<HotkeyState>();
+            state.update(&app_handle, |snapshot| {
+                snapshot.capture_finished_at_ms = Some(capture_finished_at_ms);
+                recompute_timing_metrics(snapshot);
+            });
 
             let capture = match capture {
                 Ok(capture) if !capture.text.trim().is_empty() => capture,
@@ -557,6 +713,7 @@ mod windows_impl {
                     voice: None,
                     model: None,
                     format: Some(settings.tts_format.clone()),
+                    mode: Some(settings.tts_mode.clone()),
                     autoplay: Some(true),
                     max_chunk_chars: None,
                     max_parallel_requests: Some(3),
@@ -572,9 +729,15 @@ mod windows_impl {
                 Ok(speech) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
                     snapshot.message = format!(
-                        "Translate run finished in {} ms. TTS produced {} chunk(s) and playback completed in order.",
+                        "Translate run finished in {} ms. Mode {} produced {} chunk(s){}{}.",
                         overall_started.elapsed().as_millis(),
-                        speech.chunk_count
+                        speech.mode,
+                        speech.chunk_count,
+                        format_start_latency_suffix(speech.start_latency_ms),
+                        format_hotkey_to_first_playback_suffix(
+                            snapshot.hotkey_started_at_ms,
+                            speech.first_audio_playback_started_at_ms,
+                        )
                     );
                     snapshot.last_action = Some("translate".to_string());
                     snapshot.last_captured_text = Some(capture.text);
@@ -583,6 +746,15 @@ mod windows_impl {
                     snapshot.last_audio_path = Some(speech.file_path);
                     snapshot.last_audio_output_directory = Some(speech.output_directory);
                     snapshot.last_audio_chunk_count = Some(speech.chunk_count);
+                    snapshot.active_tts_mode = Some(speech.mode.clone());
+                    snapshot.requested_tts_mode = Some(speech.requested_mode);
+                    snapshot.session_strategy = Some(speech.session_strategy);
+                    snapshot.session_id = Some(speech.session_id);
+                    snapshot.session_fallback_reason = speech.fallback_reason;
+                    snapshot.first_audio_received_at_ms = speech.first_audio_received_at_ms;
+                    snapshot.first_audio_playback_started_at_ms = speech.first_audio_playback_started_at_ms;
+                    snapshot.start_latency_ms = speech.start_latency_ms;
+                    recompute_timing_metrics(snapshot);
                 }),
                 Err(error) if is_cancelled_error(&error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
@@ -606,8 +778,112 @@ mod windows_impl {
 
     fn update_progress(app: &AppHandle, action: &str, progress: TtsProgress) {
         match progress {
-            TtsProgress::PipelineStarted { chunk_count, format, .. } => {
-                update_working(app, action, format!("TTS pipeline started. Planned {chunk_count} chunk(s) as {}.", format.to_uppercase()));
+            TtsProgress::PipelineStarted { mode, chunk_count, format, started_at_ms, .. } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = format!(
+                        "TTS pipeline started in {mode} mode. Planned {chunk_count} chunk(s) as {}.",
+                        format.to_uppercase()
+                    );
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.tts_started_at_ms = Some(started_at_ms);
+                    snapshot.first_audio_received_at_ms = None;
+                    snapshot.first_audio_playback_started_at_ms = None;
+                    snapshot.start_latency_ms = None;
+                    recompute_timing_metrics(snapshot);
+                });
+            }
+            TtsProgress::RealtimeConnecting { mode, model, voice, session_id } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = format!(
+                        "Connecting realtime websocket session {session_id} with model {model} and voice {voice}."
+                    );
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.session_id = Some(session_id);
+                });
+            }
+            TtsProgress::RealtimeConnected { mode, model, voice, session_id } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = format!(
+                        "Realtime connect ok for session {session_id}. Streaming with model {model} and voice {voice}."
+                    );
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.session_id = Some(session_id);
+                });
+            }
+            TtsProgress::RealtimeSessionUpdateSucceeded { mode, session_id } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = format!("Realtime session.update ok for session {session_id}.");
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.session_id = Some(session_id);
+                });
+            }
+            TtsProgress::RealtimeResponseCreateSucceeded { mode, session_id } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = format!("Realtime response.create ok for session {session_id}. Waiting for first audio delta …");
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.session_id = Some(session_id);
+                });
+            }
+            TtsProgress::RealtimeNoAudioReceived { mode, session_id, detail } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = format!("Realtime first audio delta missing for session {session_id}: {detail}");
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.session_id = Some(session_id);
+                });
+            }
+            TtsProgress::FallbackToLive { reason } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = reason.clone();
+                    snapshot.active_tts_mode = Some("live".to_string());
+                    snapshot.session_fallback_reason = Some(reason);
+                });
+            }
+            TtsProgress::FirstAudioReceived { mode, at_ms, latency_ms, bytes_received } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message = format!(
+                        "First audio arrived in {latency_ms} ms ({bytes_received} bytes, mode {mode})."
+                    );
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.first_audio_received_at_ms = Some(at_ms);
+                    recompute_timing_metrics(snapshot);
+                });
+            }
+            TtsProgress::FirstAudioPlaybackStarted { mode, at_ms, latency_ms } => {
+                let state = app.state::<HotkeyState>();
+                state.update(app, |snapshot| {
+                    snapshot.state = "working";
+                    snapshot.last_action = Some(action.to_string());
+                    snapshot.message =
+                        format!("Audible playback started after {latency_ms} ms in {mode} mode.");
+                    snapshot.active_tts_mode = Some(mode);
+                    snapshot.first_audio_playback_started_at_ms = Some(at_ms);
+                    snapshot.start_latency_ms = Some(latency_ms);
+                    recompute_timing_metrics(snapshot);
+                });
             }
             TtsProgress::ChunkRequestStarted { index, total, text_chars } => {
                 update_working(app, action, format!("Preparing chunk {}/{} … ({} chars)", index + 1, total, text_chars));
@@ -630,6 +906,32 @@ mod windows_impl {
     fn format_chunk_suffix(index: Option<usize>, total: Option<usize>) -> String {
         match (index, total) {
             (Some(index), Some(total)) => format!(" on chunk {index}/{total}"),
+            _ => String::new(),
+        }
+    }
+
+    fn system_time_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+            .unwrap_or(0)
+    }
+
+    fn format_start_latency_suffix(start_latency_ms: Option<u64>) -> String {
+        start_latency_ms
+            .map(|value| format!(" First audible audio after {value} ms"))
+            .unwrap_or_default()
+    }
+
+    fn format_hotkey_to_first_playback_suffix(
+        hotkey_started_at_ms: Option<u64>,
+        first_audio_playback_started_at_ms: Option<u64>,
+    ) -> String {
+        match (hotkey_started_at_ms, first_audio_playback_started_at_ms) {
+            (Some(hotkey_started), Some(first_playback)) => first_playback
+                .checked_sub(hotkey_started)
+                .map(|value| format!(" End-to-end hotkey→audio {value} ms"))
+                .unwrap_or_default(),
             _ => String::new(),
         }
     }
