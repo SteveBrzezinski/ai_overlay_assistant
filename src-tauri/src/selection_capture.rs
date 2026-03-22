@@ -10,7 +10,7 @@ pub struct CaptureOptions {
 impl Default for CaptureOptions {
     fn default() -> Self {
         Self {
-            copy_delay_ms: Some(140),
+            copy_delay_ms: Some(100),
             restore_clipboard: Some(true),
         }
     }
@@ -103,7 +103,7 @@ Add-Type -AssemblyName System.Windows.Forms
     pub fn capture_selected_text(options: Option<CaptureOptions>) -> Result<CaptureResult, String> {
         let options = options.unwrap_or_default();
         let restore = options.restore_clipboard.unwrap_or(true);
-        let delay = Duration::from_millis(options.copy_delay_ms.unwrap_or(140));
+        let delay = Duration::from_millis(options.copy_delay_ms.unwrap_or(100));
 
         let previous = get_clipboard_text().ok().flatten();
         let _ = clear_clipboard();

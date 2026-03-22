@@ -16,6 +16,8 @@ const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
+    pub tts_mode: String,
+    pub realtime_allow_live_fallback: bool,
     pub tts_format: String,
     pub first_chunk_leading_silence_ms: u32,
     pub translation_target_language: String,
@@ -26,6 +28,8 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            tts_mode: "classic".to_string(),
+            realtime_allow_live_fallback: false,
             tts_format: "wav".to_string(),
             first_chunk_leading_silence_ms: 180,
             translation_target_language: "en".to_string(),
@@ -112,6 +116,12 @@ impl SettingsState {
 }
 
 pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
+    settings.tts_mode = match settings.tts_mode.trim().to_lowercase().as_str() {
+        "live" | "low_latency" | "low-latency" => "live".to_string(),
+        "realtime" | "realtime_experimental" | "realtime-experimental" => "realtime".to_string(),
+        _ => "classic".to_string(),
+    };
+
     settings.tts_format = match settings.tts_format.trim().to_lowercase().as_str() {
         "mp3" => "mp3".to_string(),
         _ => "wav".to_string(),

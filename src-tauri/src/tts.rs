@@ -2,13 +2,16 @@ use crate::{
     run_controller::{is_cancelled_error, RunAccess},
     settings::{resolve_openai_api_key, AppSettings},
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rodio::{buffer::SamplesBuffer, Decoder, OutputStream, Sink, Source};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     env,
     fs,
-    io::BufReader,
+    io::{BufReader, Read},
+    net::TcpStream,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -17,15 +20,45 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tungstenite::{
+    client::IntoClientRequest,
+    http::HeaderValue,
+    stream::MaybeTlsStream,
+    Message as WsMessage,
+    WebSocket,
+};
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini-tts";
+const DEFAULT_REALTIME_MODEL: &str = "gpt-realtime-1.5";
 const DEFAULT_VOICE: &str = "alloy";
 const DEFAULT_FORMAT: &str = "wav";
+const DEFAULT_TTS_MODE: &str = "classic";
 const DEFAULT_MAX_CHUNK_CHARS: usize = 280;
 const DEFAULT_MAX_PARALLEL_REQUESTS: usize = 3;
 const MAX_PARALLEL_REQUESTS_LIMIT: usize = 4;
 const MIN_CHUNK_CHARS: usize = 120;
 const MAX_CHUNK_CHARS: usize = 1_200;
+const LIVE_TRANSPORT_FORMAT: &str = "pcm";
+const LIVE_SAMPLE_RATE: u32 = 24_000;
+const LIVE_CHANNELS: u16 = 1;
+const LIVE_BITS_PER_SAMPLE: u16 = 16;
+const LIVE_INITIAL_BUFFER_MS: u32 = 140;
+const LIVE_STREAM_BUFFER_MS: u32 = 180;
+const LIVE_NATURALIZED_INITIAL_BUFFER_MS: u32 = 420;
+const LIVE_NATURALIZED_STREAM_BUFFER_MS: u32 = 240;
+const LIVE_NATURALIZED_SPEEDUP_BUFFER_MS: u32 = 220;
+const LIVE_NATURALIZED_SLOWDOWN_BUFFER_MS: u32 = 80;
+const LIVE_NATURALIZED_OUTPUT_CROSSFADE_SAMPLES: usize = 1_024;
+const LIVE_CONNECT_TIMEOUT_MS: u64 = 4_000;
+const LIVE_REQUEST_TIMEOUT_MS: u64 = 60_000;
+const LIVE_READ_BUFFER_BYTES: usize = 8_192;
+const REALTIME_TRANSPORT_FORMAT: &str = "pcm16";
+const REALTIME_SAMPLE_RATE: u32 = 24_000;
+const REALTIME_CHANNELS: u16 = 1;
+const REALTIME_BITS_PER_SAMPLE: u16 = 16;
+const REALTIME_EVENT_POLL_TIMEOUT_MS: u64 = 250;
+const REALTIME_STARTUP_TIMEOUT_MS: u64 = 8_000;
+const REALTIME_RESPONSE_TIMEOUT_MS: u64 = 60_000;
 const TIME_STRETCH_FRAME_SIZE: usize = 2_048;
 const TIME_STRETCH_OVERLAP: usize = 512;
 const TIME_STRETCH_SEARCH: usize = 384;
@@ -37,6 +70,7 @@ pub struct SpeakTextOptions {
     pub voice: Option<String>,
     pub model: Option<String>,
     pub format: Option<String>,
+    pub mode: Option<String>,
     pub autoplay: Option<bool>,
     pub max_chunk_chars: Option<usize>,
     pub max_parallel_requests: Option<usize>,
@@ -52,17 +86,69 @@ pub struct SpeakTextResult {
     pub chunk_count: usize,
     pub voice: String,
     pub model: String,
+    pub mode: String,
+    pub requested_mode: String,
+    pub session_id: String,
+    pub session_strategy: String,
+    pub fallback_reason: Option<String>,
+    pub supports_persistent_session: bool,
     pub format: String,
+    pub transport_format: String,
     pub autoplay: bool,
+    pub first_audio_received_at_ms: Option<u64>,
+    pub first_audio_playback_started_at_ms: Option<u64>,
+    pub start_latency_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
 pub enum TtsProgress {
     PipelineStarted {
+        mode: String,
         chunk_count: usize,
         format: String,
+        transport_format: String,
         autoplay: bool,
         max_parallel_requests: usize,
+        started_at_ms: u64,
+    },
+    RealtimeConnecting {
+        mode: String,
+        model: String,
+        voice: String,
+        session_id: String,
+    },
+    RealtimeConnected {
+        mode: String,
+        model: String,
+        voice: String,
+        session_id: String,
+    },
+    RealtimeSessionUpdateSucceeded {
+        mode: String,
+        session_id: String,
+    },
+    RealtimeResponseCreateSucceeded {
+        mode: String,
+        session_id: String,
+    },
+    RealtimeNoAudioReceived {
+        mode: String,
+        session_id: String,
+        detail: String,
+    },
+    FallbackToLive {
+        reason: String,
+    },
+    FirstAudioReceived {
+        mode: String,
+        at_ms: u64,
+        latency_ms: u64,
+        bytes_received: usize,
+    },
+    FirstAudioPlaybackStarted {
+        mode: String,
+        at_ms: u64,
+        latency_ms: u64,
     },
     ChunkRequestStarted {
         index: usize,
@@ -104,11 +190,131 @@ struct OpenAiSpeechRequest<'a> {
     response_format: &'a str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TtsMode {
+    Classic,
+    Live,
+    RealtimeExperimental,
+}
+
+impl TtsMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Live => "live",
+            Self::RealtimeExperimental => "realtime",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SpeechSessionPlan {
+    session_id: String,
+    requested_mode: TtsMode,
+    resolved_mode: TtsMode,
+    session_strategy: String,
+    supports_persistent_session: bool,
+    fallback_reason: Option<String>,
+}
+
+impl SpeechSessionPlan {
+    fn mode_label(&self) -> &str {
+        self.resolved_mode.as_str()
+    }
+
+    fn fallback_to_live(&self, reason: impl Into<String>) -> Self {
+        Self {
+            session_id: self.session_id.clone(),
+            requested_mode: self.requested_mode,
+            resolved_mode: TtsMode::Live,
+            session_strategy: "realtime_websocket_live_fallback_session".to_string(),
+            supports_persistent_session: true,
+            fallback_reason: Some(reason.into()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RealtimePipelineError {
+    message: String,
+    can_fallback_to_live: bool,
+}
+
+impl RealtimePipelineError {
+    fn fallback(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            can_fallback_to_live: true,
+        }
+    }
+
+    fn terminal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            can_fallback_to_live: false,
+        }
+    }
+}
+
+enum RealtimeSocketRead {
+    Event(Value),
+    Timeout,
+    Closed(Option<String>),
+    Ignored,
+}
+
+type RealtimeSocket = WebSocket<MaybeTlsStream<TcpStream>>;
+
+#[derive(Debug, Clone, Copy)]
+enum LivePlaybackPath {
+    FastDirect,
+    NaturalizedSpeed,
+}
+
+impl LivePlaybackPath {
+    fn from_playback_speed(playback_speed: f32) -> Self {
+        if (playback_speed - 1.0).abs() < 0.01 {
+            Self::FastDirect
+        } else {
+            Self::NaturalizedSpeed
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FastDirect => "fast_direct",
+            Self::NaturalizedSpeed => "naturalized_speed",
+        }
+    }
+
+    fn initial_buffer_ms(self, playback_speed: f32) -> u32 {
+        match self {
+            Self::FastDirect => LIVE_INITIAL_BUFFER_MS,
+            Self::NaturalizedSpeed => naturalized_live_buffer_ms(
+                LIVE_NATURALIZED_INITIAL_BUFFER_MS,
+                playback_speed,
+            ),
+        }
+    }
+
+    fn stream_buffer_ms(self, playback_speed: f32) -> u32 {
+        match self {
+            Self::FastDirect => LIVE_STREAM_BUFFER_MS,
+            Self::NaturalizedSpeed => naturalized_live_buffer_ms(
+                LIVE_NATURALIZED_STREAM_BUFFER_MS,
+                playback_speed,
+            ),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ResolvedSpeakOptions {
     voice: String,
     model: String,
+    mode: TtsMode,
     format: String,
+    transport_format: String,
     autoplay: bool,
     max_chunk_chars: usize,
     max_parallel_requests: usize,
@@ -128,11 +334,19 @@ struct GeneratedChunk {
     index: usize,
     file_path: String,
     bytes_written: usize,
+    first_audio_received_at_ms: Option<u64>,
+    first_audio_latency_ms: Option<u64>,
 }
 
 enum PipelineMessage {
     ChunkReady(GeneratedChunk),
     Failed(String),
+}
+
+struct OrderedPlaybackResult {
+    chunks: Vec<GeneratedChunk>,
+    first_audio_playback_started_at_ms: Option<u64>,
+    start_latency_ms: Option<u64>,
 }
 
 trait SpeechProvider: Send + Sync + Clone + 'static {
@@ -141,6 +355,7 @@ trait SpeechProvider: Send + Sync + Clone + 'static {
         options: &ResolvedSpeakOptions,
         chunk: &ChunkJob,
         total_chunks: usize,
+        pipeline_started: Instant,
         progress: Option<&ProgressCallback>,
         run_access: Option<&RunAccess>,
     ) -> Result<GeneratedChunk, String>;
@@ -167,6 +382,7 @@ impl SpeechProvider for OpenAiSpeechProvider {
         options: &ResolvedSpeakOptions,
         chunk: &ChunkJob,
         total_chunks: usize,
+        pipeline_started: Instant,
         progress: Option<&ProgressCallback>,
         run_access: Option<&RunAccess>,
     ) -> Result<GeneratedChunk, String> {
@@ -220,6 +436,15 @@ impl SpeechProvider for OpenAiSpeechProvider {
                 bytes_received: bytes.len(),
                 elapsed_ms: response_elapsed_ms,
             });
+
+            if chunk.index == 0 {
+                progress(TtsProgress::FirstAudioReceived {
+                    mode: options.mode.as_str().to_string(),
+                    at_ms: system_time_ms(),
+                    latency_ms: millis_u64(pipeline_started.elapsed()),
+                    bytes_received: bytes.len(),
+                });
+            }
         }
 
         if let Some(run_access) = run_access {
@@ -250,7 +475,78 @@ impl SpeechProvider for OpenAiSpeechProvider {
             index: chunk.index,
             file_path: chunk.file_path.to_string_lossy().to_string(),
             bytes_written: bytes.len(),
+            first_audio_received_at_ms: (chunk.index == 0).then(system_time_ms),
+            first_audio_latency_ms: (chunk.index == 0).then(|| millis_u64(pipeline_started.elapsed())),
         })
+    }
+}
+
+struct LiveSpeechPipeline {
+    api_key: String,
+}
+
+struct RealtimeSpeechPipeline {
+    api_key: String,
+}
+
+struct NaturalizedLivePlaybackState {
+    output_overlap_samples: usize,
+    pending_output_tail: Vec<f32>,
+}
+
+impl NaturalizedLivePlaybackState {
+    fn new(output_overlap_samples: usize) -> Self {
+        Self {
+            output_overlap_samples,
+            pending_output_tail: Vec::new(),
+        }
+    }
+
+    fn merge_transformed_batch(&mut self, transformed_samples: Vec<f32>, flush_all: bool) -> Vec<f32> {
+        let mut merged = if self.pending_output_tail.is_empty() {
+            transformed_samples
+        } else {
+            crossfade_live_output_chunks(&self.pending_output_tail, &transformed_samples)
+        };
+
+        self.pending_output_tail.clear();
+
+        if flush_all {
+            return merged;
+        }
+
+        if merged.len() <= self.output_overlap_samples {
+            self.pending_output_tail = merged;
+            return Vec::new();
+        }
+
+        let tail_start = merged.len() - self.output_overlap_samples;
+        self.pending_output_tail = merged.split_off(tail_start);
+        merged
+    }
+
+    fn take_pending_output_tail(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.pending_output_tail)
+    }
+}
+
+fn build_live_http_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_millis(LIVE_CONNECT_TIMEOUT_MS))
+        .timeout(Duration::from_millis(LIVE_REQUEST_TIMEOUT_MS))
+        .build()
+        .map_err(|err| format!("Failed to build streaming HTTP client: {err}"))
+}
+
+impl LiveSpeechPipeline {
+    fn new(api_key: String) -> Result<Self, String> {
+        Ok(Self { api_key })
+    }
+}
+
+impl RealtimeSpeechPipeline {
+    fn new(api_key: String) -> Self {
+        Self { api_key }
     }
 }
 
@@ -271,10 +567,12 @@ where
         &self,
         text: &str,
         options: ResolvedSpeakOptions,
+        session_plan: &SpeechSessionPlan,
         progress: Option<ProgressCallback>,
         run_access: Option<RunAccess>,
     ) -> Result<SpeakTextResult, String> {
         let started = Instant::now();
+        let started_at_ms = system_time_ms();
         if let Some(run_access) = &run_access {
             run_access.check_cancelled()?;
             run_access.update_phase("tts_chunking");
@@ -286,16 +584,21 @@ where
 
         if let Some(progress_cb) = &progress {
             progress_cb(TtsProgress::PipelineStarted {
+                mode: options.mode.as_str().to_string(),
                 chunk_count: chunks.len(),
                 format: options.format.clone(),
+                transport_format: options.transport_format.clone(),
                 autoplay: options.autoplay,
                 max_parallel_requests: options.max_parallel_requests,
+                started_at_ms,
             });
         }
 
         println!(
-            "[tts] pipeline_start format={} autoplay={} planned_chunks={} max_parallel_requests={} text_chars={}",
+            "[tts] pipeline_start mode={} format={} transport_format={} autoplay={} planned_chunks={} max_parallel_requests={} text_chars={}",
+            options.mode.as_str(),
             options.format,
+            options.transport_format,
             options.autoplay,
             chunks.len(),
             options.max_parallel_requests,
@@ -346,6 +649,7 @@ where
                     &options,
                     &job,
                     jobs.len(),
+                    started,
                     progress.as_ref(),
                     run_access.as_ref(),
                 ) {
@@ -391,17 +695,20 @@ where
         let playback_result = self.collect_and_play_ordered_chunks(
             receiver,
             expected_chunks,
+            options.mode,
             options.autoplay,
             options.first_chunk_leading_silence_ms,
             options.playback_speed,
+            started,
             progress.clone(),
             run_access.clone(),
         );
-        let ordered_chunks = match playback_result {
-            Ok(ordered_chunks) => ordered_chunks,
+        let playback_result = match playback_result {
+            Ok(playback_result) => playback_result,
             Err(error) if is_cancelled_error(&error) => {
                 println!(
-                    "[tts] pipeline_cancelled planned_chunks={} total_ms={}",
+                    "[tts] pipeline_cancelled mode={} planned_chunks={} total_ms={}",
+                    options.mode.as_str(),
                     expected_chunks,
                     started.elapsed().as_millis()
                 );
@@ -416,27 +723,49 @@ where
         if let Err(error) = join_result {
             return Err(error);
         }
-        let first_chunk = ordered_chunks
+        let first_chunk = playback_result
+            .chunks
             .first()
             .ok_or_else(|| "No audio chunks were produced.".to_string())?;
 
         println!(
-            "[tts] pipeline_done planned_chunks={} produced_chunks={} bytes_written={} total_ms={}",
+            "[tts] pipeline_done mode={} planned_chunks={} produced_chunks={} bytes_written={} total_ms={}",
+            options.mode.as_str(),
             expected_chunks,
-            ordered_chunks.len(),
-            ordered_chunks.iter().map(|chunk| chunk.bytes_written).sum::<usize>(),
+            playback_result.chunks.len(),
+            playback_result
+                .chunks
+                .iter()
+                .map(|chunk| chunk.bytes_written)
+                .sum::<usize>(),
             started.elapsed().as_millis()
         );
 
         Ok(SpeakTextResult {
             file_path: first_chunk.file_path.clone(),
             output_directory: output_directory.to_string_lossy().to_string(),
-            bytes_written: ordered_chunks.iter().map(|chunk| chunk.bytes_written).sum(),
-            chunk_count: ordered_chunks.len(),
+            bytes_written: playback_result
+                .chunks
+                .iter()
+                .map(|chunk| chunk.bytes_written)
+                .sum(),
+            chunk_count: playback_result.chunks.len(),
             voice: options.voice,
             model: options.model,
+            mode: session_plan.mode_label().to_string(),
+            requested_mode: session_plan.requested_mode.as_str().to_string(),
+            session_id: session_plan.session_id.clone(),
+            session_strategy: session_plan.session_strategy.clone(),
+            fallback_reason: session_plan.fallback_reason.clone(),
+            supports_persistent_session: session_plan.supports_persistent_session,
             format: options.format,
+            transport_format: options.transport_format,
             autoplay: options.autoplay,
+            first_audio_received_at_ms: first_chunk.first_audio_received_at_ms,
+            first_audio_playback_started_at_ms: playback_result.first_audio_playback_started_at_ms,
+            start_latency_ms: playback_result
+                .start_latency_ms
+                .or(first_chunk.first_audio_latency_ms),
         })
     }
 
@@ -444,15 +773,19 @@ where
         &self,
         receiver: mpsc::Receiver<PipelineMessage>,
         expected_chunks: usize,
+        mode: TtsMode,
         autoplay: bool,
         first_chunk_leading_silence_ms: u32,
         playback_speed: f32,
+        pipeline_started: Instant,
         progress: Option<ProgressCallback>,
         run_access: Option<RunAccess>,
-    ) -> Result<Vec<GeneratedChunk>, String> {
+    ) -> Result<OrderedPlaybackResult, String> {
         let mut buffered = HashMap::<usize, GeneratedChunk>::new();
         let mut ordered = Vec::with_capacity(expected_chunks);
         let mut next_index = 0usize;
+        let mut first_audio_playback_started_at_ms = None;
+        let mut start_latency_ms = None;
 
         while ordered.len() < expected_chunks {
             if let Some(run_access) = &run_access {
@@ -466,8 +799,12 @@ where
                     autoplay,
                     first_chunk_leading_silence_ms,
                     playback_speed,
+                    mode,
+                    pipeline_started,
                     progress.as_ref(),
                     run_access.as_ref(),
+                    &mut first_audio_playback_started_at_ms,
+                    &mut start_latency_ms,
                 )?;
                 ordered.push(chunk);
                 next_index += 1;
@@ -483,8 +820,12 @@ where
                             autoplay,
                             first_chunk_leading_silence_ms,
                             playback_speed,
+                            mode,
+                            pipeline_started,
                             progress.as_ref(),
                             run_access.as_ref(),
+                            &mut first_audio_playback_started_at_ms,
+                            &mut start_latency_ms,
                         )?;
                         ordered.push(chunk);
                         next_index += 1;
@@ -496,8 +837,12 @@ where
                                 autoplay,
                                 first_chunk_leading_silence_ms,
                                 playback_speed,
+                                mode,
+                                pipeline_started,
                                 progress.as_ref(),
                                 run_access.as_ref(),
+                                &mut first_audio_playback_started_at_ms,
+                                &mut start_latency_ms,
                             )?;
                             ordered.push(buffered_chunk);
                             next_index += 1;
@@ -517,7 +862,11 @@ where
             }
         }
 
-        Ok(ordered)
+        Ok(OrderedPlaybackResult {
+            chunks: ordered,
+            first_audio_playback_started_at_ms,
+            start_latency_ms,
+        })
     }
 
     fn play_chunk_if_needed(
@@ -527,8 +876,12 @@ where
         autoplay: bool,
         first_chunk_leading_silence_ms: u32,
         playback_speed: f32,
+        mode: TtsMode,
+        pipeline_started: Instant,
         progress: Option<&ProgressCallback>,
         run_access: Option<&RunAccess>,
+        first_audio_playback_started_at_ms: &mut Option<u64>,
+        start_latency_ms: &mut Option<u64>,
     ) -> Result<(), String> {
         if autoplay {
             if let Some(run_access) = run_access {
@@ -549,7 +902,24 @@ where
             } else {
                 0
             };
-            play_audio(&chunk.file_path, leading_silence_ms, playback_speed, run_access)?;
+            let playback_marker = if chunk.index == 0 {
+                Some(PlaybackStartMarker {
+                    mode,
+                    pipeline_started,
+                    progress: progress.cloned(),
+                    first_audio_playback_started_at_ms,
+                    start_latency_ms,
+                })
+            } else {
+                None
+            };
+            play_audio(
+                &chunk.file_path,
+                leading_silence_ms,
+                playback_speed,
+                run_access,
+                playback_marker,
+            )?;
             let playback_elapsed_ms = playback_started.elapsed().as_millis();
             println!(
                 "[tts] chunk_playback_finished chunk={}/{} elapsed_ms={} path={}",
@@ -825,6 +1195,64 @@ fn build_chunk_path(output_directory: &Path, index: usize, format: &str) -> Path
     output_directory.join(format!("chunk-{:03}.{format}", index + 1))
 }
 
+fn resolve_tts_mode(value: Option<String>) -> TtsMode {
+    match value
+        .unwrap_or_else(|| DEFAULT_TTS_MODE.to_string())
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "live" | "low_latency" | "low-latency" => TtsMode::Live,
+        "realtime" | "realtime_experimental" | "realtime-experimental" => TtsMode::RealtimeExperimental,
+        _ => TtsMode::Classic,
+    }
+}
+
+fn build_session_plan(requested_mode: TtsMode) -> SpeechSessionPlan {
+    let session_id = format!("tts-session-{}", system_time_ms());
+    match requested_mode {
+        TtsMode::Classic => SpeechSessionPlan {
+            session_id,
+            requested_mode,
+            resolved_mode: TtsMode::Classic,
+            session_strategy: "chunked_file_session".to_string(),
+            supports_persistent_session: false,
+            fallback_reason: None,
+        },
+        TtsMode::Live => SpeechSessionPlan {
+            session_id,
+            requested_mode,
+            resolved_mode: TtsMode::Live,
+            session_strategy: "streaming_audio_session".to_string(),
+            supports_persistent_session: true,
+            fallback_reason: None,
+        },
+        TtsMode::RealtimeExperimental => SpeechSessionPlan {
+            session_id,
+            requested_mode,
+            resolved_mode: TtsMode::RealtimeExperimental,
+            session_strategy: "realtime_websocket_session".to_string(),
+            supports_persistent_session: true,
+            fallback_reason: None,
+        },
+    }
+}
+
+fn default_model_for_mode(mode: TtsMode) -> &'static str {
+    match mode {
+        TtsMode::Classic | TtsMode::Live => DEFAULT_MODEL,
+        TtsMode::RealtimeExperimental => DEFAULT_REALTIME_MODEL,
+    }
+}
+
+fn resolve_fallback_live_model(explicit_model: Option<&str>) -> String {
+    match explicit_model.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) if value.contains("realtime") => DEFAULT_MODEL.to_string(),
+        Some(value) => value.to_string(),
+        None => DEFAULT_MODEL.to_string(),
+    }
+}
+
 fn resolve_format(format: Option<String>) -> Result<String, String> {
     let value = format
         .unwrap_or_else(|| DEFAULT_FORMAT.to_string())
@@ -876,6 +1304,30 @@ impl Drop for SinkRegistrationGuard<'_> {
         if let Some(run_access) = self.run_access {
             run_access.clear_sink();
         }
+    }
+}
+
+struct PlaybackStartMarker<'a> {
+    mode: TtsMode,
+    pipeline_started: Instant,
+    progress: Option<ProgressCallback>,
+    first_audio_playback_started_at_ms: &'a mut Option<u64>,
+    start_latency_ms: &'a mut Option<u64>,
+}
+
+fn mark_first_audio_playback_started(marker: &mut PlaybackStartMarker<'_>) {
+    let at_ms = system_time_ms();
+    let latency_ms = millis_u64(marker.pipeline_started.elapsed());
+
+    *marker.first_audio_playback_started_at_ms = Some(at_ms);
+    *marker.start_latency_ms = Some(latency_ms);
+
+    if let Some(progress) = &marker.progress {
+        progress(TtsProgress::FirstAudioPlaybackStarted {
+            mode: marker.mode.as_str().to_string(),
+            at_ms,
+            latency_ms,
+        });
     }
 }
 
@@ -1036,11 +1488,48 @@ fn time_stretch_samples(samples: &[f32], channels: u16, playback_speed: f32) -> 
     interleaved
 }
 
+fn naturalized_live_buffer_ms(base_ms: u32, playback_speed: f32) -> u32 {
+    let speedup = (playback_speed - 1.0).max(0.0);
+    let slowdown = (1.0 - playback_speed).max(0.0);
+
+    (base_ms as f32
+        + (speedup * LIVE_NATURALIZED_SPEEDUP_BUFFER_MS as f32)
+        + (slowdown * LIVE_NATURALIZED_SLOWDOWN_BUFFER_MS as f32))
+        .round()
+        .clamp(base_ms as f32, 900.0) as u32
+}
+
+fn crossfade_live_output_chunks(previous: &[f32], next: &[f32]) -> Vec<f32> {
+    if previous.is_empty() {
+        return next.to_vec();
+    }
+
+    if next.is_empty() {
+        return previous.to_vec();
+    }
+
+    let crossfade_len = previous.len().min(next.len());
+    let previous_prefix_len = previous.len().saturating_sub(crossfade_len);
+    let mut merged = Vec::with_capacity(previous.len() + next.len() - crossfade_len);
+
+    merged.extend_from_slice(&previous[..previous_prefix_len]);
+
+    for index in 0..crossfade_len {
+        let fade_in = crossfade_strength(index, crossfade_len);
+        let fade_out = 1.0 - fade_in;
+        merged.push((previous[previous_prefix_len + index] * fade_out) + (next[index] * fade_in));
+    }
+
+    merged.extend_from_slice(&next[crossfade_len..]);
+    merged
+}
+
 fn play_audio(
     file_path: &str,
     leading_silence_ms: u32,
     playback_speed: f32,
     run_access: Option<&RunAccess>,
+    mut playback_start_marker: Option<PlaybackStartMarker<'_>>,
 ) -> Result<(), String> {
     if let Some(run_access) = run_access {
         run_access.check_cancelled()?;
@@ -1077,6 +1566,9 @@ fn play_audio(
         );
     }
 
+    if let Some(marker) = playback_start_marker.as_mut() {
+        mark_first_audio_playback_started(marker);
+    }
     sink.append(SamplesBuffer::new(channels, sample_rate, stretched_samples));
 
     loop {
@@ -1095,6 +1587,1317 @@ fn play_audio(
     drop(stream);
 
     Ok(())
+}
+
+fn pcm_buffer_bytes(sample_rate: u32, channels: u16, bits_per_sample: u16, buffer_ms: u32) -> usize {
+    ((sample_rate as usize * channels as usize * (bits_per_sample as usize / 8)) * buffer_ms as usize)
+        / 1_000
+}
+
+fn live_buffer_bytes(buffer_ms: u32) -> usize {
+    pcm_buffer_bytes(
+        LIVE_SAMPLE_RATE,
+        LIVE_CHANNELS,
+        LIVE_BITS_PER_SAMPLE,
+        buffer_ms,
+    )
+}
+
+fn pcm16le_to_f32_samples(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(2)
+        .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32)
+        .collect()
+}
+
+fn append_pcm_samples_to_sink(
+    sink: &Sink,
+    samples: Vec<f32>,
+    channels: u16,
+    sample_rate: u32,
+    file_path: &str,
+    mode: TtsMode,
+    pipeline_started: Instant,
+    progress: Option<&ProgressCallback>,
+    first_audio_playback_started_at_ms: &mut Option<u64>,
+    start_latency_ms: &mut Option<u64>,
+) {
+    if samples.is_empty() {
+        return;
+    }
+
+    if first_audio_playback_started_at_ms.is_none() {
+        let at_ms = system_time_ms();
+        let latency_ms = millis_u64(pipeline_started.elapsed());
+        *first_audio_playback_started_at_ms = Some(at_ms);
+        *start_latency_ms = Some(latency_ms);
+
+        if let Some(progress) = progress {
+            progress(TtsProgress::FirstAudioPlaybackStarted {
+                mode: mode.as_str().to_string(),
+                at_ms,
+                latency_ms,
+            });
+            progress(TtsProgress::ChunkPlaybackStarted {
+                index: 0,
+                total: 1,
+                file_path: file_path.to_string(),
+            });
+        }
+    }
+
+    sink.append(SamplesBuffer::new(channels, sample_rate, samples));
+}
+
+fn wrap_pcm_as_wav(bytes: &[u8], sample_rate: u32, channels: u16, bits_per_sample: u16) -> Vec<u8> {
+    let block_align = channels * (bits_per_sample / 8);
+    let byte_rate = sample_rate * block_align as u32;
+    let data_size = bytes.len() as u32;
+    let riff_size = 36u32.saturating_add(data_size);
+    let mut wav = Vec::with_capacity(44 + bytes.len());
+
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&riff_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&bits_per_sample.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_size.to_le_bytes());
+    wav.extend_from_slice(bytes);
+
+    wav
+}
+
+fn wait_for_sink_to_finish(sink: &Sink, run_access: Option<&RunAccess>) -> Result<(), String> {
+    loop {
+        if let Some(run_access) = run_access {
+            run_access.wait_if_paused()?;
+            run_access.check_cancelled()?;
+        }
+
+        if sink.empty() {
+            return Ok(());
+        }
+
+        thread::sleep(Duration::from_millis(30));
+    }
+}
+
+fn append_pcm16_to_sink(
+    sink: &Sink,
+    pending_pcm_bytes: &mut Vec<u8>,
+    channels: u16,
+    sample_rate: u32,
+    file_path: &str,
+    mode: TtsMode,
+    pipeline_started: Instant,
+    progress: Option<&ProgressCallback>,
+    first_audio_playback_started_at_ms: &mut Option<u64>,
+    start_latency_ms: &mut Option<u64>,
+) {
+    let even_len = pending_pcm_bytes.len() - (pending_pcm_bytes.len() % 2);
+    if even_len == 0 {
+        return;
+    }
+
+    let chunk_bytes = pending_pcm_bytes.drain(..even_len).collect::<Vec<_>>();
+    append_pcm_samples_to_sink(
+        sink,
+        pcm16le_to_f32_samples(&chunk_bytes),
+        channels,
+        sample_rate,
+        file_path,
+        mode,
+        pipeline_started,
+        progress,
+        first_audio_playback_started_at_ms,
+        start_latency_ms,
+    );
+}
+
+fn append_naturalized_pcm16_to_sink(
+    sink: &Sink,
+    pending_pcm_bytes: &mut Vec<u8>,
+    channels: u16,
+    sample_rate: u32,
+    playback_speed: f32,
+    playback_state: &mut NaturalizedLivePlaybackState,
+    flush_all: bool,
+    file_path: &str,
+    mode: TtsMode,
+    pipeline_started: Instant,
+    progress: Option<&ProgressCallback>,
+    first_audio_playback_started_at_ms: &mut Option<u64>,
+    start_latency_ms: &mut Option<u64>,
+) {
+    let even_len = pending_pcm_bytes.len() - (pending_pcm_bytes.len() % 2);
+    if even_len == 0 {
+        return;
+    }
+
+    let chunk_bytes = pending_pcm_bytes.drain(..even_len).collect::<Vec<_>>();
+    let transformed_samples = time_stretch_samples(
+        &pcm16le_to_f32_samples(&chunk_bytes),
+        channels,
+        playback_speed,
+    );
+    let output_samples = playback_state.merge_transformed_batch(transformed_samples, flush_all);
+
+    append_pcm_samples_to_sink(
+        sink,
+        output_samples,
+        channels,
+        sample_rate,
+        file_path,
+        mode,
+        pipeline_started,
+        progress,
+        first_audio_playback_started_at_ms,
+        start_latency_ms,
+    );
+}
+
+fn nested_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn nested_u64(value: &Value, path: &[&str]) -> Option<u64> {
+    nested_value(value, path)?.as_u64()
+}
+
+fn realtime_output_sample_rate_from_event(event: &Value) -> Option<u32> {
+    [
+        ["session", "audio", "output", "format", "rate"],
+        ["session", "audio", "input", "format", "rate"],
+        ["response", "audio", "output", "format", "rate"],
+    ]
+    .iter()
+    .find_map(|path| nested_u64(event, path).and_then(|value| u32::try_from(value).ok()))
+}
+
+fn extract_realtime_error_message(event: &Value) -> String {
+    nested_value(event, &["error", "message"])
+        .and_then(Value::as_str)
+        .or_else(|| {
+            nested_value(event, &["response", "status_details", "error", "message"])
+                .and_then(Value::as_str)
+        })
+        .or_else(|| nested_value(event, &["message"]).and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| event.to_string())
+}
+
+fn configure_realtime_socket(socket: &mut RealtimeSocket) -> Result<(), String> {
+    let timeout = Some(Duration::from_millis(REALTIME_EVENT_POLL_TIMEOUT_MS));
+    match socket.get_mut() {
+        MaybeTlsStream::Plain(stream) => stream.set_read_timeout(timeout),
+        MaybeTlsStream::Rustls(stream) => stream.get_mut().set_read_timeout(timeout),
+        _ => Ok(()),
+    }
+    .map_err(|err| format!("Failed to configure realtime websocket timeouts: {err}"))
+}
+
+fn read_realtime_socket(socket: &mut RealtimeSocket) -> Result<RealtimeSocketRead, String> {
+    match socket.read() {
+        Ok(WsMessage::Text(text)) => serde_json::from_str::<Value>(text.as_ref())
+            .map(RealtimeSocketRead::Event)
+            .map_err(|err| format!("Failed to parse realtime websocket event: {err}")),
+        Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => Ok(RealtimeSocketRead::Ignored),
+        Ok(WsMessage::Close(frame)) => Ok(RealtimeSocketRead::Closed(
+            frame
+                .map(|frame| frame.reason.to_string())
+                .filter(|reason| !reason.trim().is_empty()),
+        )),
+        Ok(_) => Ok(RealtimeSocketRead::Ignored),
+        Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
+            Ok(RealtimeSocketRead::Closed(None))
+        }
+        Err(tungstenite::Error::Io(error))
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(RealtimeSocketRead::Timeout)
+        }
+        Err(error) => Err(format!("Realtime websocket read failed: {error}")),
+    }
+}
+
+fn send_realtime_json_event(socket: &mut RealtimeSocket, event: Value) -> Result<(), String> {
+    socket
+        .send(WsMessage::Text(event.to_string().into()))
+        .map_err(|err| format!("Realtime websocket write failed: {err}"))
+}
+
+fn close_realtime_socket(socket: &mut RealtimeSocket) {
+    let _ = socket.close(None);
+}
+
+fn cancel_realtime_socket(socket: &mut RealtimeSocket) {
+    let _ = send_realtime_json_event(socket, json!({ "type": "response.cancel" }));
+    let _ = socket.close(None);
+}
+
+fn check_realtime_run_control(
+    run_access: Option<&RunAccess>,
+    socket: &mut RealtimeSocket,
+) -> Result<(), RealtimePipelineError> {
+    let Some(run_access) = run_access else {
+        return Ok(());
+    };
+
+    if let Err(error) = run_access.wait_if_paused() {
+        if is_cancelled_error(&error) {
+            cancel_realtime_socket(socket);
+        }
+        return Err(RealtimePipelineError::terminal(error));
+    }
+
+    if let Err(error) = run_access.check_cancelled() {
+        if is_cancelled_error(&error) {
+            cancel_realtime_socket(socket);
+        }
+        return Err(RealtimePipelineError::terminal(error));
+    }
+
+    Ok(())
+}
+
+impl LiveSpeechPipeline {
+    fn run(
+        &self,
+        text: &str,
+        options: ResolvedSpeakOptions,
+        session_plan: &SpeechSessionPlan,
+        progress: Option<ProgressCallback>,
+        run_access: Option<RunAccess>,
+    ) -> Result<SpeakTextResult, String> {
+        let started = Instant::now();
+        let started_at_ms = system_time_ms();
+        let output_directory = build_output_directory()?;
+        let output_file = build_chunk_path(&output_directory, 0, &options.format);
+        let output_file_path = output_file.to_string_lossy().to_string();
+
+        if let Some(run_access) = &run_access {
+            run_access.check_cancelled()?;
+            run_access.update_phase("tts_streaming_request");
+        }
+
+        if let Some(progress_cb) = &progress {
+            progress_cb(TtsProgress::PipelineStarted {
+                mode: options.mode.as_str().to_string(),
+                chunk_count: 1,
+                format: options.format.clone(),
+                transport_format: options.transport_format.clone(),
+                autoplay: options.autoplay,
+                max_parallel_requests: 1,
+                started_at_ms,
+            });
+        }
+
+        println!(
+            "[tts] pipeline_start mode={} format={} transport_format={} autoplay={} planned_chunks=1 text_chars={}",
+            options.mode.as_str(),
+            options.format,
+            options.transport_format,
+            options.autoplay,
+            text.chars().count()
+        );
+
+        if options.first_chunk_leading_silence_ms > 0 {
+            println!(
+                "[tts] live_mode_ignores_first_chunk_lead_in requested_ms={}",
+                options.first_chunk_leading_silence_ms
+            );
+        }
+
+        let live_request_started = Instant::now();
+        let request_body = OpenAiSpeechRequest {
+            model: &options.model,
+            voice: &options.voice,
+            input: text,
+            response_format: &options.transport_format,
+        };
+        let live_http_client = build_live_http_client()?;
+
+        let mut response = live_http_client
+            .post("https://api.openai.com/v1/audio/speech")
+            .bearer_auth(&self.api_key)
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .map_err(|err| format!("OpenAI live speech request failed: {err}"))?;
+
+        println!(
+            "[tts] live_request_headers_received latency_ms={} status={}",
+            millis_u64(live_request_started.elapsed()),
+            response.status()
+        );
+
+        if let Some(run_access) = &run_access {
+            run_access.check_cancelled()?;
+            run_access.update_phase("tts_streaming_audio");
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(format!("OpenAI live TTS failed ({status}): {body}"));
+        }
+
+        let playback_path = LivePlaybackPath::from_playback_speed(options.playback_speed);
+        let initial_buffer_ms = playback_path.initial_buffer_ms(options.playback_speed);
+        let stream_buffer_ms = playback_path.stream_buffer_ms(options.playback_speed);
+
+        println!(
+            "[tts] live_playback_path={} speed={} initial_buffer_ms={} stream_buffer_ms={}",
+            playback_path.as_str(),
+            options.playback_speed,
+            initial_buffer_ms,
+            stream_buffer_ms
+        );
+
+        let mut _stream = None;
+        let mut sink = None;
+        let mut naturalized_playback_state =
+            NaturalizedLivePlaybackState::new(LIVE_NATURALIZED_OUTPUT_CROSSFADE_SAMPLES);
+        let _sink_registration = SinkRegistrationGuard::new(run_access.as_ref());
+        if options.autoplay {
+            let (stream, stream_handle) = OutputStream::try_default()
+                .map_err(|err| format!("Failed to open default audio output device: {err}"))?;
+            let live_sink = Arc::new(
+                Sink::try_new(&stream_handle)
+                    .map_err(|err| format!("Failed to create audio sink: {err}"))?,
+            );
+
+            if let Some(run_access) = &run_access {
+                run_access.register_sink(Arc::clone(&live_sink))?;
+                run_access.update_phase("tts_playback_active");
+            }
+
+            _stream = Some(stream);
+            sink = Some(live_sink);
+        }
+
+        let mut read_buffer = [0u8; LIVE_READ_BUFFER_BYTES];
+        let mut full_pcm_bytes = Vec::new();
+        let mut pending_pcm_bytes = Vec::new();
+        let mut first_audio_received_at_ms = None;
+        let mut first_audio_playback_started_at_ms = None;
+        let mut start_latency_ms = None;
+
+        loop {
+            if let Some(run_access) = &run_access {
+                run_access.wait_if_paused()?;
+                run_access.check_cancelled()?;
+            }
+
+            match response.read(&mut read_buffer) {
+                Ok(0) => break,
+                Ok(bytes_read) => {
+                    if first_audio_received_at_ms.is_none() {
+                        let at_ms = system_time_ms();
+                        let latency_ms = millis_u64(started.elapsed());
+                        first_audio_received_at_ms = Some(at_ms);
+                        println!(
+                            "[tts] first_audio_received mode={} latency_ms={} bytes_received={}",
+                            options.mode.as_str(),
+                            latency_ms,
+                            bytes_read
+                        );
+
+                        if let Some(progress) = &progress {
+                            progress(TtsProgress::FirstAudioReceived {
+                                mode: options.mode.as_str().to_string(),
+                                at_ms,
+                                latency_ms,
+                                bytes_received: bytes_read,
+                            });
+                        }
+                    }
+
+                    full_pcm_bytes.extend_from_slice(&read_buffer[..bytes_read]);
+                    pending_pcm_bytes.extend_from_slice(&read_buffer[..bytes_read]);
+
+                    if let Some(sink) = sink.as_ref() {
+                        let threshold_bytes = if first_audio_playback_started_at_ms.is_some() {
+                            live_buffer_bytes(stream_buffer_ms)
+                        } else {
+                            live_buffer_bytes(initial_buffer_ms)
+                        };
+
+                        if pending_pcm_bytes.len() >= threshold_bytes {
+                            match playback_path {
+                                LivePlaybackPath::FastDirect => append_pcm16_to_sink(
+                                    sink,
+                                    &mut pending_pcm_bytes,
+                                    LIVE_CHANNELS,
+                                    LIVE_SAMPLE_RATE,
+                                    &output_file_path,
+                                    options.mode,
+                                    started,
+                                    progress.as_ref(),
+                                    &mut first_audio_playback_started_at_ms,
+                                    &mut start_latency_ms,
+                                ),
+                                LivePlaybackPath::NaturalizedSpeed => {
+                                    append_naturalized_pcm16_to_sink(
+                                        sink,
+                                        &mut pending_pcm_bytes,
+                                        LIVE_CHANNELS,
+                                        LIVE_SAMPLE_RATE,
+                                        options.playback_speed,
+                                        &mut naturalized_playback_state,
+                                        false,
+                                        &output_file_path,
+                                        options.mode,
+                                        started,
+                                        progress.as_ref(),
+                                        &mut first_audio_playback_started_at_ms,
+                                        &mut start_latency_ms,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::Interrupted
+                    ) => continue,
+                Err(error) => {
+                    return Err(format!("Failed to read streamed audio response: {error}"));
+                }
+            }
+        }
+
+        if full_pcm_bytes.is_empty() {
+            return Err("OpenAI returned an empty live audio stream.".to_string());
+        }
+
+        if let Some(sink) = sink.as_ref() {
+            match playback_path {
+                LivePlaybackPath::FastDirect => append_pcm16_to_sink(
+                    sink,
+                    &mut pending_pcm_bytes,
+                    LIVE_CHANNELS,
+                    LIVE_SAMPLE_RATE,
+                    &output_file_path,
+                    options.mode,
+                    started,
+                    progress.as_ref(),
+                    &mut first_audio_playback_started_at_ms,
+                    &mut start_latency_ms,
+                ),
+                LivePlaybackPath::NaturalizedSpeed => {
+                    append_naturalized_pcm16_to_sink(
+                        sink,
+                        &mut pending_pcm_bytes,
+                        LIVE_CHANNELS,
+                        LIVE_SAMPLE_RATE,
+                        options.playback_speed,
+                        &mut naturalized_playback_state,
+                        true,
+                        &output_file_path,
+                        options.mode,
+                        started,
+                        progress.as_ref(),
+                        &mut first_audio_playback_started_at_ms,
+                        &mut start_latency_ms,
+                    );
+
+                    append_pcm_samples_to_sink(
+                        sink,
+                        naturalized_playback_state.take_pending_output_tail(),
+                        LIVE_CHANNELS,
+                        LIVE_SAMPLE_RATE,
+                        &output_file_path,
+                        options.mode,
+                        started,
+                        progress.as_ref(),
+                        &mut first_audio_playback_started_at_ms,
+                        &mut start_latency_ms,
+                    );
+                }
+            }
+            wait_for_sink_to_finish(sink, run_access.as_ref())?;
+
+            if let Some(progress) = &progress {
+                progress(TtsProgress::ChunkPlaybackFinished {
+                    index: 0,
+                    total: 1,
+                    elapsed_ms: started.elapsed().as_millis(),
+                });
+            }
+        }
+
+        let wav_bytes = wrap_pcm_as_wav(
+            &full_pcm_bytes,
+            LIVE_SAMPLE_RATE,
+            LIVE_CHANNELS,
+            LIVE_BITS_PER_SAMPLE,
+        );
+        fs::write(&output_file, &wav_bytes)
+            .map_err(|err| format!("Failed to write live audio file: {err}"))?;
+
+        println!(
+            "[tts] pipeline_done mode={} produced_chunks=1 bytes_written={} first_audio_received_at_ms={:?} first_audio_playback_started_at_ms={:?} start_latency_ms={:?} total_ms={}",
+            options.mode.as_str(),
+            wav_bytes.len(),
+            first_audio_received_at_ms,
+            first_audio_playback_started_at_ms,
+            start_latency_ms,
+            started.elapsed().as_millis()
+        );
+
+        Ok(SpeakTextResult {
+            file_path: output_file_path,
+            output_directory: output_directory.to_string_lossy().to_string(),
+            bytes_written: wav_bytes.len(),
+            chunk_count: 1,
+            voice: options.voice,
+            model: options.model,
+            mode: session_plan.mode_label().to_string(),
+            requested_mode: session_plan.requested_mode.as_str().to_string(),
+            session_id: session_plan.session_id.clone(),
+            session_strategy: session_plan.session_strategy.clone(),
+            fallback_reason: session_plan.fallback_reason.clone(),
+            supports_persistent_session: session_plan.supports_persistent_session,
+            format: options.format,
+            transport_format: options.transport_format,
+            autoplay: options.autoplay,
+            first_audio_received_at_ms,
+            first_audio_playback_started_at_ms,
+            start_latency_ms,
+        })
+    }
+}
+
+impl RealtimeSpeechPipeline {
+    fn connect(&self, model: &str) -> Result<RealtimeSocket, String> {
+        let mut request = format!("wss://api.openai.com/v1/realtime?model={model}")
+            .into_client_request()
+            .map_err(|err| format!("Failed to build realtime websocket request: {err}"))?;
+        let bearer = format!("Bearer {}", self.api_key);
+        request.headers_mut().insert(
+            "Authorization",
+            HeaderValue::from_str(&bearer)
+                .map_err(|err| format!("Failed to build realtime auth header: {err}"))?,
+        );
+        request
+            .headers_mut()
+            .insert("OpenAI-Beta", HeaderValue::from_static("realtime=v1"));
+
+        let (mut socket, _) = tungstenite::connect(request)
+            .map_err(|err| format!("OpenAI realtime websocket connection failed: {err}"))?;
+        configure_realtime_socket(&mut socket)?;
+
+        Ok(socket)
+    }
+
+    fn run(
+        &self,
+        text: &str,
+        options: ResolvedSpeakOptions,
+        session_plan: &SpeechSessionPlan,
+        progress: Option<ProgressCallback>,
+        run_access: Option<RunAccess>,
+    ) -> Result<SpeakTextResult, RealtimePipelineError> {
+        let started = Instant::now();
+        let started_at_ms = system_time_ms();
+        let output_directory =
+            build_output_directory().map_err(RealtimePipelineError::terminal)?;
+        let output_file = build_chunk_path(&output_directory, 0, &options.format);
+        let output_file_path = output_file.to_string_lossy().to_string();
+
+        if let Some(run_access) = &run_access {
+            run_access
+                .check_cancelled()
+                .map_err(RealtimePipelineError::terminal)?;
+            run_access.update_phase("tts_realtime_connecting");
+        }
+
+        if let Some(progress_cb) = &progress {
+            progress_cb(TtsProgress::PipelineStarted {
+                mode: options.mode.as_str().to_string(),
+                chunk_count: 1,
+                format: options.format.clone(),
+                transport_format: options.transport_format.clone(),
+                autoplay: options.autoplay,
+                max_parallel_requests: 1,
+                started_at_ms,
+            });
+            progress_cb(TtsProgress::RealtimeConnecting {
+                mode: options.mode.as_str().to_string(),
+                model: options.model.clone(),
+                voice: options.voice.clone(),
+                session_id: session_plan.session_id.clone(),
+            });
+        }
+
+        println!(
+            "[tts] pipeline_start mode={} format={} transport_format={} autoplay={} planned_chunks=1 text_chars={} session_strategy={}",
+            options.mode.as_str(),
+            options.format,
+            options.transport_format,
+            options.autoplay,
+            text.chars().count(),
+            session_plan.session_strategy
+        );
+
+        if options.first_chunk_leading_silence_ms > 0 {
+            println!(
+                "[tts] realtime_mode_ignores_first_chunk_lead_in requested_ms={}",
+                options.first_chunk_leading_silence_ms
+            );
+        }
+
+        let mut socket = self
+            .connect(&options.model)
+            .map_err(RealtimePipelineError::fallback)?;
+        let mut realtime_sample_rate = REALTIME_SAMPLE_RATE;
+        let startup_timeout = Duration::from_millis(REALTIME_STARTUP_TIMEOUT_MS);
+        let response_timeout = Duration::from_millis(REALTIME_RESPONSE_TIMEOUT_MS);
+        let emit_no_audio_progress = |detail: &str| {
+            if let Some(progress_cb) = &progress {
+                progress_cb(TtsProgress::RealtimeNoAudioReceived {
+                    mode: options.mode.as_str().to_string(),
+                    session_id: session_plan.session_id.clone(),
+                    detail: detail.to_string(),
+                });
+            }
+        };
+
+        println!(
+            "[tts] realtime_connect=start session_id={} model={} voice={}",
+            session_plan.session_id, options.model, options.voice
+        );
+
+        loop {
+            check_realtime_run_control(run_access.as_ref(), &mut socket)?;
+            if started.elapsed() > startup_timeout {
+                close_realtime_socket(&mut socket);
+                eprintln!(
+                    "[tts] realtime_connect=fail session_id={} detail=Timed out waiting for the initial realtime session handshake.",
+                    session_plan.session_id
+                );
+                return Err(RealtimePipelineError::fallback(
+                    "Timed out waiting for the initial realtime session handshake.",
+                ));
+            }
+
+            match read_realtime_socket(&mut socket).map_err(RealtimePipelineError::fallback)? {
+                RealtimeSocketRead::Event(event) => match event.get("type").and_then(Value::as_str) {
+                    Some("session.created") => {
+                        if let Some(rate) = realtime_output_sample_rate_from_event(&event) {
+                            realtime_sample_rate = rate;
+                        }
+                        println!(
+                            "[tts] realtime_connect=ok session_id={} sample_rate={}",
+                            session_plan.session_id, realtime_sample_rate
+                        );
+
+                        if let Some(progress_cb) = &progress {
+                            progress_cb(TtsProgress::RealtimeConnected {
+                                mode: options.mode.as_str().to_string(),
+                                model: options.model.clone(),
+                                voice: options.voice.clone(),
+                                session_id: session_plan.session_id.clone(),
+                            });
+                        }
+                        break;
+                    }
+                    Some("error") => {
+                        close_realtime_socket(&mut socket);
+                        let message = extract_realtime_error_message(&event);
+                        eprintln!(
+                            "[tts] realtime_connect=fail session_id={} detail={}",
+                            session_plan.session_id, message
+                        );
+                        return Err(RealtimePipelineError::fallback(format!(
+                            "OpenAI Realtime session creation failed: {}",
+                            message
+                        )));
+                    }
+                    _ => {}
+                },
+                RealtimeSocketRead::Closed(reason) => {
+                    let message = match reason {
+                        Some(reason) => format!(
+                            "OpenAI realtime websocket closed before session initialization: {reason}"
+                        ),
+                        None => "OpenAI realtime websocket closed before session initialization."
+                            .to_string(),
+                    };
+                    eprintln!(
+                        "[tts] realtime_connect=fail session_id={} detail={}",
+                        session_plan.session_id, message
+                    );
+                    return Err(RealtimePipelineError::fallback(message));
+                }
+                RealtimeSocketRead::Timeout | RealtimeSocketRead::Ignored => {}
+            }
+        }
+
+        if let Some(run_access) = &run_access {
+            run_access.update_phase("tts_realtime_initializing");
+        }
+
+        println!(
+            "[tts] realtime_session_update=start session_id={} sample_rate={}",
+            session_plan.session_id, realtime_sample_rate
+        );
+
+        send_realtime_json_event(
+            &mut socket,
+            json!({
+                "type": "session.update",
+                "session": {
+                    "model": options.model.as_str(),
+                    "modalities": ["audio", "text"],
+                    "output_audio_format": REALTIME_TRANSPORT_FORMAT,
+                    "voice": options.voice.as_str(),
+                    "instructions": "You are in strict verbatim read-aloud mode. Speak exactly the provided user text and nothing else. Do not answer the user. Do not summarize. Do not explain. Do not translate. Do not interpret. Do not paraphrase. Do not add introductions, conclusions, filler words, acknowledgements, comments, or extra sentences. Do not continue the conversation. Do not act like a helpful assistant. Read only the provided text as literally and as closely as possible.",
+                }
+            }),
+        )
+        .map_err(|error| {
+            eprintln!(
+                "[tts] realtime_session_update=fail session_id={} detail={}",
+                session_plan.session_id, error
+            );
+            RealtimePipelineError::fallback(error)
+        })?;
+
+        let session_update_started = Instant::now();
+        loop {
+            check_realtime_run_control(run_access.as_ref(), &mut socket)?;
+            if session_update_started.elapsed() > startup_timeout {
+                close_realtime_socket(&mut socket);
+                eprintln!(
+                    "[tts] realtime_session_update=fail session_id={} detail=Timed out waiting for realtime session.update confirmation.",
+                    session_plan.session_id
+                );
+                return Err(RealtimePipelineError::fallback(
+                    "Timed out waiting for realtime session.update confirmation.",
+                ));
+            }
+
+            match read_realtime_socket(&mut socket).map_err(RealtimePipelineError::fallback)? {
+                RealtimeSocketRead::Event(event) => match event.get("type").and_then(Value::as_str) {
+                    Some("session.updated") => {
+                        if let Some(rate) = realtime_output_sample_rate_from_event(&event) {
+                            realtime_sample_rate = rate;
+                        }
+                        println!(
+                            "[tts] realtime_session_update=ok session_id={} sample_rate={}",
+                            session_plan.session_id, realtime_sample_rate
+                        );
+                        if let Some(progress_cb) = &progress {
+                            progress_cb(TtsProgress::RealtimeSessionUpdateSucceeded {
+                                mode: options.mode.as_str().to_string(),
+                                session_id: session_plan.session_id.clone(),
+                            });
+                        }
+                        break;
+                    }
+                    Some("error") => {
+                        close_realtime_socket(&mut socket);
+                        let message = extract_realtime_error_message(&event);
+                        eprintln!(
+                            "[tts] realtime_session_update=fail session_id={} detail={}",
+                            session_plan.session_id, message
+                        );
+                        return Err(RealtimePipelineError::fallback(format!(
+                            "OpenAI Realtime session update failed: {}",
+                            message
+                        )));
+                    }
+                    _ => {}
+                },
+                RealtimeSocketRead::Closed(reason) => {
+                    let message = match reason {
+                        Some(reason) => format!(
+                            "OpenAI realtime websocket closed during session initialization: {reason}"
+                        ),
+                        None => "OpenAI realtime websocket closed during session initialization."
+                            .to_string(),
+                    };
+                    eprintln!(
+                        "[tts] realtime_session_update=fail session_id={} detail={}",
+                        session_plan.session_id, message
+                    );
+                    return Err(RealtimePipelineError::fallback(message));
+                }
+                RealtimeSocketRead::Timeout | RealtimeSocketRead::Ignored => {}
+            }
+        }
+
+        send_realtime_json_event(
+            &mut socket,
+            json!({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": format!("Read the following text verbatim, exactly as written between the delimiters. Do not add any extra words before or after it.\nBEGIN_TEXT\n{}\nEND_TEXT", text),
+                        }
+                    ]
+                }
+            }),
+        )
+        .map_err(RealtimePipelineError::fallback)?;
+
+        println!(
+            "[tts] realtime_response_create=start session_id={} sample_rate={}",
+            session_plan.session_id, realtime_sample_rate
+        );
+
+        send_realtime_json_event(
+            &mut socket,
+            json!({
+                "type": "response.create",
+                "response": {
+                    "modalities": ["audio", "text"],
+                    "output_audio_format": REALTIME_TRANSPORT_FORMAT,
+                    "voice": options.voice.as_str(),
+                }
+            }),
+        )
+        .map_err(|error| {
+            eprintln!(
+                "[tts] realtime_response_create=fail session_id={} detail={}",
+                session_plan.session_id, error
+            );
+            RealtimePipelineError::fallback(error)
+        })?;
+
+        println!(
+            "[tts] realtime_response_create=ok session_id={} waiting_for_first_audio_delta=true",
+            session_plan.session_id
+        );
+
+        if let Some(progress_cb) = &progress {
+            progress_cb(TtsProgress::RealtimeResponseCreateSucceeded {
+                mode: options.mode.as_str().to_string(),
+                session_id: session_plan.session_id.clone(),
+            });
+        }
+
+        if let Some(run_access) = &run_access {
+            run_access.update_phase("tts_streaming_audio");
+        }
+
+        let playback_path = LivePlaybackPath::from_playback_speed(options.playback_speed);
+        let initial_buffer_ms = playback_path.initial_buffer_ms(options.playback_speed);
+        let stream_buffer_ms = playback_path.stream_buffer_ms(options.playback_speed);
+
+        println!(
+            "[tts] realtime_playback_path={} speed={} initial_buffer_ms={} stream_buffer_ms={}",
+            playback_path.as_str(),
+            options.playback_speed,
+            initial_buffer_ms,
+            stream_buffer_ms
+        );
+
+        let mut _stream = None;
+        let mut sink = None;
+        let mut naturalized_playback_state =
+            NaturalizedLivePlaybackState::new(LIVE_NATURALIZED_OUTPUT_CROSSFADE_SAMPLES);
+        let _sink_registration = SinkRegistrationGuard::new(run_access.as_ref());
+        if options.autoplay {
+            let (stream, stream_handle) = OutputStream::try_default()
+                .map_err(|err| RealtimePipelineError::terminal(format!(
+                    "Failed to open default audio output device: {err}"
+                )))?;
+            let realtime_sink = Arc::new(
+                Sink::try_new(&stream_handle).map_err(|err| {
+                    RealtimePipelineError::terminal(format!("Failed to create audio sink: {err}"))
+                })?,
+            );
+
+            if let Some(run_access) = &run_access {
+                run_access
+                    .register_sink(Arc::clone(&realtime_sink))
+                    .map_err(RealtimePipelineError::terminal)?;
+                run_access.update_phase("tts_playback_active");
+            }
+
+            _stream = Some(stream);
+            sink = Some(realtime_sink);
+        }
+
+        let mut full_pcm_bytes = Vec::new();
+        let mut pending_pcm_bytes = Vec::new();
+        let mut first_audio_received_at_ms = None;
+        let mut first_audio_playback_started_at_ms = None;
+        let mut start_latency_ms = None;
+        let mut response_done = false;
+        let response_started = Instant::now();
+
+        loop {
+            check_realtime_run_control(run_access.as_ref(), &mut socket)?;
+
+            if first_audio_received_at_ms.is_none() && response_started.elapsed() > response_timeout {
+                close_realtime_socket(&mut socket);
+                let detail =
+                    "Timed out waiting for realtime audio output after response.create.";
+                eprintln!(
+                    "[tts] realtime_first_audio_delta=fail session_id={} detail={}",
+                    session_plan.session_id, detail
+                );
+                emit_no_audio_progress(detail);
+                return Err(RealtimePipelineError::fallback(
+                    "Timed out waiting for realtime audio output after response.create.",
+                ));
+            }
+
+            match read_realtime_socket(&mut socket) {
+                Ok(RealtimeSocketRead::Event(event)) => match event.get("type").and_then(Value::as_str)
+                {
+                    Some("response.output_audio.delta") | Some("response.audio.delta") => {
+                        let delta = event
+                            .get("delta")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                let message =
+                                    "Realtime audio delta event was missing its Base64 payload.";
+                                if first_audio_received_at_ms.is_none() {
+                                    RealtimePipelineError::fallback(message)
+                                } else {
+                                    RealtimePipelineError::terminal(message)
+                                }
+                            })?;
+                        let bytes = BASE64_STANDARD.decode(delta).map_err(|err| {
+                            if first_audio_received_at_ms.is_none() {
+                                RealtimePipelineError::fallback(format!(
+                                    "Failed to decode realtime audio delta: {err}"
+                                ))
+                            } else {
+                                RealtimePipelineError::terminal(format!(
+                                    "Failed to decode realtime audio delta: {err}"
+                                ))
+                            }
+                        })?;
+
+                        if bytes.is_empty() {
+                            continue;
+                        }
+
+                        if first_audio_received_at_ms.is_none() {
+                            let at_ms = system_time_ms();
+                            let latency_ms = millis_u64(started.elapsed());
+                            first_audio_received_at_ms = Some(at_ms);
+                            println!(
+                                "[tts] realtime_first_audio_delta=ok session_id={} latency_ms={} bytes_received={}",
+                                session_plan.session_id, latency_ms, bytes.len()
+                            );
+
+                            if let Some(progress_cb) = &progress {
+                                progress_cb(TtsProgress::FirstAudioReceived {
+                                    mode: options.mode.as_str().to_string(),
+                                    at_ms,
+                                    latency_ms,
+                                    bytes_received: bytes.len(),
+                                });
+                            }
+                        }
+
+                        full_pcm_bytes.extend_from_slice(&bytes);
+                        pending_pcm_bytes.extend_from_slice(&bytes);
+
+                        if let Some(sink) = sink.as_ref() {
+                            let threshold_bytes = if first_audio_playback_started_at_ms.is_some() {
+                                pcm_buffer_bytes(
+                                    realtime_sample_rate,
+                                    REALTIME_CHANNELS,
+                                    REALTIME_BITS_PER_SAMPLE,
+                                    stream_buffer_ms,
+                                )
+                            } else {
+                                pcm_buffer_bytes(
+                                    realtime_sample_rate,
+                                    REALTIME_CHANNELS,
+                                    REALTIME_BITS_PER_SAMPLE,
+                                    initial_buffer_ms,
+                                )
+                            };
+
+                            if pending_pcm_bytes.len() >= threshold_bytes {
+                                match playback_path {
+                                    LivePlaybackPath::FastDirect => append_pcm16_to_sink(
+                                        sink,
+                                        &mut pending_pcm_bytes,
+                                        REALTIME_CHANNELS,
+                                        realtime_sample_rate,
+                                        &output_file_path,
+                                        options.mode,
+                                        started,
+                                        progress.as_ref(),
+                                        &mut first_audio_playback_started_at_ms,
+                                        &mut start_latency_ms,
+                                    ),
+                                    LivePlaybackPath::NaturalizedSpeed => {
+                                        append_naturalized_pcm16_to_sink(
+                                            sink,
+                                            &mut pending_pcm_bytes,
+                                            REALTIME_CHANNELS,
+                                            realtime_sample_rate,
+                                            options.playback_speed,
+                                            &mut naturalized_playback_state,
+                                            false,
+                                            &output_file_path,
+                                            options.mode,
+                                            started,
+                                            progress.as_ref(),
+                                            &mut first_audio_playback_started_at_ms,
+                                            &mut start_latency_ms,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some("session.updated") => {
+                        if let Some(rate) = realtime_output_sample_rate_from_event(&event) {
+                            realtime_sample_rate = rate;
+                        }
+                    }
+                    Some("response.done") => {
+                        if let Some(status) =
+                            nested_value(&event, &["response", "status"]).and_then(Value::as_str)
+                        {
+                            if !matches!(status, "completed" | "complete") {
+                                close_realtime_socket(&mut socket);
+                                let message = format!(
+                                    "OpenAI Realtime response finished with status '{status}': {}",
+                                    extract_realtime_error_message(&event)
+                                );
+                                if first_audio_received_at_ms.is_none() {
+                                    eprintln!(
+                                        "[tts] realtime_first_audio_delta=fail session_id={} detail={}",
+                                        session_plan.session_id, message
+                                    );
+                                    emit_no_audio_progress(&message);
+                                }
+                                return Err(if first_audio_received_at_ms.is_none() {
+                                    RealtimePipelineError::fallback(message)
+                                } else {
+                                    RealtimePipelineError::terminal(message)
+                                });
+                            }
+                        }
+                        response_done = true;
+                    }
+                    Some("error") => {
+                        close_realtime_socket(&mut socket);
+                        let message = format!(
+                            "OpenAI Realtime returned an error: {}",
+                            extract_realtime_error_message(&event)
+                        );
+                        if first_audio_received_at_ms.is_none() {
+                            eprintln!(
+                                "[tts] realtime_first_audio_delta=fail session_id={} detail={}",
+                                session_plan.session_id, message
+                            );
+                            emit_no_audio_progress(&message);
+                        }
+                        return Err(if first_audio_received_at_ms.is_none() {
+                            RealtimePipelineError::fallback(message)
+                        } else {
+                            RealtimePipelineError::terminal(message)
+                        });
+                    }
+                    _ => {}
+                },
+                Ok(RealtimeSocketRead::Closed(reason)) => {
+                    if response_done || !full_pcm_bytes.is_empty() {
+                        break;
+                    }
+
+                    let message = match reason {
+                        Some(reason) => {
+                            format!("OpenAI realtime websocket closed before any audio arrived: {reason}")
+                        }
+                        None => {
+                            "OpenAI realtime websocket closed before any audio arrived.".to_string()
+                        }
+                    };
+                    eprintln!(
+                        "[tts] realtime_first_audio_delta=fail session_id={} detail={}",
+                        session_plan.session_id, message
+                    );
+                    emit_no_audio_progress(&message);
+                    return Err(RealtimePipelineError::fallback(message));
+                }
+                Ok(RealtimeSocketRead::Timeout) => {
+                    if response_done {
+                        break;
+                    }
+                }
+                Ok(RealtimeSocketRead::Ignored) => {}
+                Err(error) => {
+                    close_realtime_socket(&mut socket);
+                    if first_audio_received_at_ms.is_none() {
+                        eprintln!(
+                            "[tts] realtime_first_audio_delta=fail session_id={} detail={}",
+                            session_plan.session_id, error
+                        );
+                        emit_no_audio_progress(&error);
+                    }
+                    return Err(if first_audio_received_at_ms.is_none() {
+                        RealtimePipelineError::fallback(error)
+                    } else {
+                        RealtimePipelineError::terminal(error)
+                    });
+                }
+            }
+        }
+
+        if full_pcm_bytes.is_empty() {
+            close_realtime_socket(&mut socket);
+            let detail = "OpenAI Realtime completed without returning any audio deltas.";
+            eprintln!(
+                "[tts] realtime_first_audio_delta=fail session_id={} detail={}",
+                session_plan.session_id, detail
+            );
+            emit_no_audio_progress(detail);
+            return Err(RealtimePipelineError::fallback(
+                "OpenAI Realtime completed without returning any audio deltas.",
+            ));
+        }
+
+        if let Some(sink) = sink.as_ref() {
+            match playback_path {
+                LivePlaybackPath::FastDirect => append_pcm16_to_sink(
+                    sink,
+                    &mut pending_pcm_bytes,
+                    REALTIME_CHANNELS,
+                    realtime_sample_rate,
+                    &output_file_path,
+                    options.mode,
+                    started,
+                    progress.as_ref(),
+                    &mut first_audio_playback_started_at_ms,
+                    &mut start_latency_ms,
+                ),
+                LivePlaybackPath::NaturalizedSpeed => {
+                    append_naturalized_pcm16_to_sink(
+                        sink,
+                        &mut pending_pcm_bytes,
+                        REALTIME_CHANNELS,
+                        realtime_sample_rate,
+                        options.playback_speed,
+                        &mut naturalized_playback_state,
+                        true,
+                        &output_file_path,
+                        options.mode,
+                        started,
+                        progress.as_ref(),
+                        &mut first_audio_playback_started_at_ms,
+                        &mut start_latency_ms,
+                    );
+
+                    append_pcm_samples_to_sink(
+                        sink,
+                        naturalized_playback_state.take_pending_output_tail(),
+                        REALTIME_CHANNELS,
+                        realtime_sample_rate,
+                        &output_file_path,
+                        options.mode,
+                        started,
+                        progress.as_ref(),
+                        &mut first_audio_playback_started_at_ms,
+                        &mut start_latency_ms,
+                    );
+                }
+            }
+
+            wait_for_sink_to_finish(sink, run_access.as_ref()).map_err(RealtimePipelineError::terminal)?;
+
+            if let Some(progress_cb) = &progress {
+                progress_cb(TtsProgress::ChunkPlaybackFinished {
+                    index: 0,
+                    total: 1,
+                    elapsed_ms: started.elapsed().as_millis(),
+                });
+            }
+        }
+
+        let wav_bytes = wrap_pcm_as_wav(
+            &full_pcm_bytes,
+            realtime_sample_rate,
+            REALTIME_CHANNELS,
+            REALTIME_BITS_PER_SAMPLE,
+        );
+        fs::write(&output_file, &wav_bytes)
+            .map_err(|err| RealtimePipelineError::terminal(format!(
+                "Failed to write realtime audio file: {err}"
+            )))?;
+
+        close_realtime_socket(&mut socket);
+
+        println!(
+            "[tts] pipeline_done mode={} produced_chunks=1 bytes_written={} first_audio_received_at_ms={:?} first_audio_playback_started_at_ms={:?} start_latency_ms={:?} total_ms={}",
+            options.mode.as_str(),
+            wav_bytes.len(),
+            first_audio_received_at_ms,
+            first_audio_playback_started_at_ms,
+            start_latency_ms,
+            started.elapsed().as_millis()
+        );
+
+        Ok(SpeakTextResult {
+            file_path: output_file_path,
+            output_directory: output_directory.to_string_lossy().to_string(),
+            bytes_written: wav_bytes.len(),
+            chunk_count: 1,
+            voice: options.voice,
+            model: options.model,
+            mode: session_plan.mode_label().to_string(),
+            requested_mode: session_plan.requested_mode.as_str().to_string(),
+            session_id: session_plan.session_id.clone(),
+            session_strategy: session_plan.session_strategy.clone(),
+            fallback_reason: session_plan.fallback_reason.clone(),
+            supports_persistent_session: session_plan.supports_persistent_session,
+            format: options.format,
+            transport_format: options.transport_format,
+            autoplay: options.autoplay,
+            first_audio_received_at_ms,
+            first_audio_playback_started_at_ms,
+            start_latency_ms,
+        })
+    }
+}
+
+fn millis_u64(duration: Duration) -> u64 {
+    duration.as_millis().min(u64::MAX as u128) as u64
+}
+
+fn system_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(millis_u64)
+        .unwrap_or(0)
 }
 
 pub fn speak_text(options: SpeakTextOptions, settings: &AppSettings) -> Result<SpeakTextResult, String> {
@@ -1121,29 +2924,116 @@ pub fn speak_text_with_progress_and_control(
     }
 
     let api_key = resolve_openai_api_key(settings)?;
+    let requested_mode = resolve_tts_mode(options.mode.or_else(|| Some(settings.tts_mode.clone())));
+    let session_plan = build_session_plan(requested_mode);
+    let requested_format =
+        resolve_format(options.format.or_else(|| Some(settings.tts_format.clone())))?;
+    let explicit_model = options.model;
+    let voice = options.voice.unwrap_or_else(|| DEFAULT_VOICE.to_string());
+    let autoplay = options.autoplay.unwrap_or(true);
+    let max_chunk_chars = resolve_max_chunk_chars(options.max_chunk_chars);
+    let max_parallel_requests = resolve_parallel_requests(options.max_parallel_requests);
+    let first_chunk_leading_silence_ms = options
+        .first_chunk_leading_silence_ms
+        .unwrap_or(settings.first_chunk_leading_silence_ms);
+    let playback_speed = settings.playback_speed;
 
-    let resolved = ResolvedSpeakOptions {
-        voice: options.voice.unwrap_or_else(|| DEFAULT_VOICE.to_string()),
-        model: options.model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
-        format: resolve_format(options.format.or_else(|| Some(settings.tts_format.clone())))?,
-        autoplay: options.autoplay.unwrap_or(true),
-        max_chunk_chars: resolve_max_chunk_chars(options.max_chunk_chars),
-        max_parallel_requests: resolve_parallel_requests(options.max_parallel_requests),
-        first_chunk_leading_silence_ms: options
-            .first_chunk_leading_silence_ms
-            .unwrap_or(settings.first_chunk_leading_silence_ms),
-        playback_speed: settings.playback_speed,
+    let build_resolved = |mode: TtsMode, model: String, format: String, transport_format: String| {
+        ResolvedSpeakOptions {
+            voice: voice.clone(),
+            model,
+            mode,
+            format,
+            transport_format,
+            autoplay,
+            max_chunk_chars,
+            max_parallel_requests,
+            first_chunk_leading_silence_ms,
+            playback_speed,
+        }
     };
 
-    let provider = OpenAiSpeechProvider::new(api_key);
-    let pipeline = ChunkedSpeechPipeline::new(provider, TextChunker::new(resolved.max_chunk_chars));
+    match requested_mode {
+        TtsMode::Classic => {
+            let resolved = build_resolved(
+                TtsMode::Classic,
+                explicit_model
+                    .clone()
+                    .unwrap_or_else(|| default_model_for_mode(TtsMode::Classic).to_string()),
+                requested_format.clone(),
+                requested_format.clone(),
+            );
+            let provider = OpenAiSpeechProvider::new(api_key);
+            let pipeline = ChunkedSpeechPipeline::new(provider, TextChunker::new(resolved.max_chunk_chars));
+            pipeline.run(&text, resolved, &session_plan, progress, run_access)
+        }
+        TtsMode::Live => {
+            let resolved = build_resolved(
+                TtsMode::Live,
+                explicit_model
+                    .clone()
+                    .unwrap_or_else(|| default_model_for_mode(TtsMode::Live).to_string()),
+                "wav".to_string(),
+                LIVE_TRANSPORT_FORMAT.to_string(),
+            );
+            let pipeline = LiveSpeechPipeline::new(api_key)?;
+            pipeline.run(&text, resolved, &session_plan, progress, run_access)
+        }
+        TtsMode::RealtimeExperimental => {
+            let realtime_resolved = build_resolved(
+                TtsMode::RealtimeExperimental,
+                explicit_model
+                    .clone()
+                    .unwrap_or_else(|| default_model_for_mode(TtsMode::RealtimeExperimental).to_string()),
+                "wav".to_string(),
+                REALTIME_TRANSPORT_FORMAT.to_string(),
+            );
+            let realtime_pipeline = RealtimeSpeechPipeline::new(api_key.clone());
+            match realtime_pipeline.run(
+                &text,
+                realtime_resolved,
+                &session_plan,
+                progress.clone(),
+                run_access.clone(),
+            ) {
+                Ok(result) => Ok(result),
+                Err(error) if error.can_fallback_to_live && settings.realtime_allow_live_fallback => {
+                    let reason = format!(
+                        "Experimental realtime websocket startup failed and the app fell back to live streaming: {}",
+                        error.message
+                    );
+                    if let Some(progress_cb) = &progress {
+                        progress_cb(TtsProgress::FallbackToLive {
+                            reason: reason.clone(),
+                        });
+                    }
 
-    pipeline.run(&text, resolved, progress, run_access)
+                    let fallback_plan = session_plan.fallback_to_live(reason);
+                    let fallback_resolved = build_resolved(
+                        TtsMode::Live,
+                        resolve_fallback_live_model(explicit_model.as_deref()),
+                        "wav".to_string(),
+                        LIVE_TRANSPORT_FORMAT.to_string(),
+                    );
+                    let live_pipeline = LiveSpeechPipeline::new(api_key)?;
+                    live_pipeline.run(&text, fallback_resolved, &fallback_plan, progress, run_access)
+                }
+                Err(error) if error.can_fallback_to_live => Err(error.message),
+                Err(error) => Err(error.message),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{split_into_sentences, time_stretch_samples, TextChunker, TIME_STRETCH_FRAME_SIZE};
+    use super::{
+        build_session_plan, crossfade_live_output_chunks, naturalized_live_buffer_ms,
+        resolve_fallback_live_model, resolve_tts_mode,
+        split_into_sentences, time_stretch_samples, wrap_pcm_as_wav, LivePlaybackPath,
+        TextChunker, TtsMode, DEFAULT_MODEL, LIVE_INITIAL_BUFFER_MS,
+        LIVE_NATURALIZED_INITIAL_BUFFER_MS, TIME_STRETCH_FRAME_SIZE,
+    };
 
     #[test]
     fn keeps_short_text_in_one_chunk() {
@@ -1177,6 +3067,77 @@ mod tests {
     fn splits_double_newlines_into_separate_segments() {
         let sentences = split_into_sentences("Title\n\nBody starts here.");
         assert_eq!(sentences, vec!["Title", "Body starts here."]);
+    }
+
+    #[test]
+    fn resolves_live_mode_aliases() {
+        assert_eq!(resolve_tts_mode(Some("live".to_string())), TtsMode::Live);
+        assert_eq!(resolve_tts_mode(Some("low-latency".to_string())), TtsMode::Live);
+        assert_eq!(resolve_tts_mode(Some("realtime".to_string())), TtsMode::RealtimeExperimental);
+        assert_eq!(resolve_tts_mode(Some("classic".to_string())), TtsMode::Classic);
+    }
+
+    #[test]
+    fn realtime_session_plan_only_falls_back_at_runtime() {
+        let plan = build_session_plan(TtsMode::RealtimeExperimental);
+        assert_eq!(plan.resolved_mode, TtsMode::RealtimeExperimental);
+
+        let fallback = plan.fallback_to_live("realtime failed");
+        assert_eq!(fallback.requested_mode, TtsMode::RealtimeExperimental);
+        assert_eq!(fallback.resolved_mode, TtsMode::Live);
+        assert!(fallback.fallback_reason.is_some());
+    }
+
+    #[test]
+    fn realtime_model_names_use_live_default_for_fallback() {
+        assert_eq!(resolve_fallback_live_model(Some("gpt-realtime-1.5")), DEFAULT_MODEL);
+        assert_eq!(
+            resolve_fallback_live_model(Some("gpt-4o-mini-tts")),
+            "gpt-4o-mini-tts"
+        );
+    }
+
+    #[test]
+    fn wraps_pcm_bytes_as_wav() {
+        let wav = wrap_pcm_as_wav(&[0, 0, 1, 0], 24_000, 1, 16);
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert_eq!(&wav[8..12], b"WAVE");
+        assert_eq!(&wav[36..40], b"data");
+        assert_eq!(wav.len(), 48);
+    }
+
+    #[test]
+    fn live_playback_path_stays_fast_at_default_speed() {
+        assert_eq!(LivePlaybackPath::from_playback_speed(1.0), LivePlaybackPath::FastDirect);
+        assert_eq!(
+            LivePlaybackPath::FastDirect.initial_buffer_ms(1.0),
+            LIVE_INITIAL_BUFFER_MS
+        );
+    }
+
+    #[test]
+    fn live_playback_path_uses_naturalized_buffering_for_speed_changes() {
+        assert_eq!(
+            LivePlaybackPath::from_playback_speed(1.3),
+            LivePlaybackPath::NaturalizedSpeed
+        );
+        assert!(
+            naturalized_live_buffer_ms(LIVE_NATURALIZED_INITIAL_BUFFER_MS, 1.6)
+                > LIVE_NATURALIZED_INITIAL_BUFFER_MS
+        );
+    }
+
+    #[test]
+    fn crossfades_live_output_batches() {
+        let previous = vec![1.0; 8];
+        let next = vec![0.0; 8];
+        let merged = crossfade_live_output_chunks(&previous, &next);
+
+        assert_eq!(merged.len(), 8);
+        assert!((merged[0] - 1.0).abs() < 0.001);
+        assert!(merged[3] < 1.0);
+        assert!(merged[3] > 0.0);
+        assert!(merged[7].abs() < 0.001);
     }
 
     #[test]

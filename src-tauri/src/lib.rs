@@ -94,11 +94,13 @@ mod commands {
         if capture.text.trim().is_empty() {
             return Err(capture.note.unwrap_or_else(|| "No marked text could be captured.".to_string()));
         }
+        let app_settings = settings.get();
         let base_speak = speak_options.unwrap_or(SpeakTextOptions {
             text: None,
             voice: None,
             model: None,
             format: None,
+            mode: None,
             autoplay: Some(true),
             max_chunk_chars: None,
             max_parallel_requests: None,
@@ -110,12 +112,13 @@ mod commands {
                 voice: base_speak.voice,
                 model: base_speak.model,
                 format: base_speak.format,
+                mode: base_speak.mode.or(Some(app_settings.tts_mode.clone())),
                 autoplay: base_speak.autoplay,
                 max_chunk_chars: base_speak.max_chunk_chars,
                 max_parallel_requests: base_speak.max_parallel_requests,
                 first_chunk_leading_silence_ms: base_speak.first_chunk_leading_silence_ms,
             },
-            &settings.get(),
+            &app_settings,
         )?;
         Ok(CaptureAndSpeakResult { captured_text: capture.text, restored_clipboard: capture.restored_clipboard, note: capture.note, speech })
     }
@@ -149,6 +152,7 @@ mod commands {
                 voice: None,
                 model: None,
                 format: Some(app_settings.tts_format.clone()),
+                mode: Some(app_settings.tts_mode.clone()),
                 autoplay: Some(true),
                 max_chunk_chars: None,
                 max_parallel_requests: Some(3),

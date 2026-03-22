@@ -4,7 +4,7 @@ use voice_overlay_assistant::{hotkey, run_controller, settings};
 
 #[tauri::command]
 fn app_status() -> &'static str {
-    "Voice Overlay Assistant MVP is ready: global hotkeys can capture selected text, then either speak it with chunked OpenAI TTS or translate it into the configured target language."
+    "Voice Overlay Assistant is ready: global hotkeys can capture selected text, then speak it with classic chunked OpenAI TTS, live low-latency streaming, or experimental realtime websocket audio with an optional live fallback, or translate it into the configured target language first."
 }
 
 fn main() {
