@@ -12,11 +12,25 @@ pub const DEFAULT_CANCEL_HOTKEY: &str = "Ctrl+Shift+X";
 pub const SETTINGS_EVENT: &str = "settings-updated";
 pub const CONFIG_FILE_NAME: &str = ".voice-overlay-assistant.config.json";
 const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
+const DEFAULT_TTS_VOICE: &str = "shimmer";
+const SUPPORTED_TTS_VOICES: &[&str] = &[
+    "alloy",
+    "ash",
+    "ballad",
+    "coral",
+    "echo",
+    "fable",
+    "nova",
+    "onyx",
+    "sage",
+    "shimmer",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub tts_mode: String,
+    pub tts_voice: String,
     pub realtime_allow_live_fallback: bool,
     pub tts_format: String,
     pub first_chunk_leading_silence_ms: u32,
@@ -29,6 +43,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             tts_mode: "classic".to_string(),
+            tts_voice: DEFAULT_TTS_VOICE.to_string(),
             realtime_allow_live_fallback: false,
             tts_format: "wav".to_string(),
             first_chunk_leading_silence_ms: 180,
@@ -120,6 +135,13 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         "live" | "low_latency" | "low-latency" => "live".to_string(),
         "realtime" | "realtime_experimental" | "realtime-experimental" => "realtime".to_string(),
         _ => "classic".to_string(),
+    };
+
+    let voice = settings.tts_voice.trim().to_lowercase();
+    settings.tts_voice = if SUPPORTED_TTS_VOICES.iter().any(|candidate| *candidate == voice) {
+        voice
+    } else {
+        DEFAULT_TTS_VOICE.to_string()
     };
 
     settings.tts_format = match settings.tts_format.trim().to_lowercase().as_str() {

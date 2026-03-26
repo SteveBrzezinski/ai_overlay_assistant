@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
- type RunHistoryEntry = {
+const OPEN_SETTINGS_EVENT = 'overlay://open-settings';
+
+type RunHistoryEntry = {
   id: string;
   recordedAtMs: number;
   state: string;
@@ -45,6 +49,7 @@ const fallbackHotkeyStatus: HotkeyStatus = {
 
 const fallbackSettings: AppSettings = {
   ttsMode: 'classic',
+  ttsVoice: 'shimmer',
   realtimeAllowLiveFallback: false,
   ttsFormat: 'wav',
   firstChunkLeadingSilenceMs: 180,
@@ -52,6 +57,19 @@ const fallbackSettings: AppSettings = {
   playbackSpeed: 1,
   openaiApiKey: '',
 };
+
+const TTS_VOICE_OPTIONS = [
+  { value: 'shimmer', label: 'Shimmer', note: 'Soft, feminine, modern' },
+  { value: 'nova', label: 'Nova', note: 'Bright, feminine, energetic' },
+  { value: 'coral', label: 'Coral', note: 'Warm and smooth' },
+  { value: 'sage', label: 'Sage', note: 'Balanced and calm' },
+  { value: 'ballad', label: 'Ballad', note: 'Gentle and mellow' },
+  { value: 'alloy', label: 'Alloy', note: 'Neutral synthetic' },
+  { value: 'ash', label: 'Ash', note: 'Dry and focused' },
+  { value: 'echo', label: 'Echo', note: 'Sharper and airy' },
+  { value: 'fable', label: 'Fable', note: 'Storytelling tone' },
+  { value: 'onyx', label: 'Onyx', note: 'Deep and dark' },
+] as const;
 
 function formatTimestamp(value?: number | null): string {
   if (!value) {
@@ -131,6 +149,9 @@ export default function App() {
   const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [settingsPulseActive, setSettingsPulseActive] = useState(false);
+  const settingsSectionRef = useRef<HTMLElement | null>(null);
+  const settingsPulseTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     void Promise.all([getAppStatus(), getHotkeyStatus(), getSettings(), getLanguageOptions()])
@@ -217,6 +238,38 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let unlistenSettings: (() => void) | undefined;
+
+    void listen(OPEN_SETTINGS_EVENT, async () => {
+      const currentWindow = getCurrentWindow();
+      await currentWindow.unminimize();
+      await currentWindow.show();
+      await currentWindow.setFocus();
+
+      settingsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setSettingsPulseActive(true);
+
+      if (settingsPulseTimeoutRef.current !== null) {
+        window.clearTimeout(settingsPulseTimeoutRef.current);
+      }
+
+      settingsPulseTimeoutRef.current = window.setTimeout(() => {
+        setSettingsPulseActive(false);
+        settingsPulseTimeoutRef.current = null;
+      }, 2200);
+    }).then((cleanup) => {
+      unlistenSettings = cleanup;
+    });
+
+    return () => {
+      unlistenSettings?.();
+      if (settingsPulseTimeoutRef.current !== null) {
+        window.clearTimeout(settingsPulseTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const hasUnsavedChanges = useMemo(
     () => JSON.stringify(settings) !== JSON.stringify(savedSettings),
     [savedSettings, settings],
@@ -271,7 +324,7 @@ export default function App() {
           format: activeSettings.ttsFormat,
           mode: activeSettings.ttsMode,
           maxParallelRequests: 3,
-          voice: 'alloy',
+          voice: activeSettings.ttsVoice,
           firstChunkLeadingSilenceMs: activeSettings.firstChunkLeadingSilenceMs,
         },
       );
@@ -410,7 +463,10 @@ export default function App() {
           ))}
         </section>
 
-        <section className="settings-card">
+        <section
+          ref={settingsSectionRef}
+          className={`settings-card${settingsPulseActive ? ' settings-card--focused' : ''}`}
+        >
           <div className="settings-header">
             <div>
               <h2>Settings</h2>
@@ -460,6 +516,29 @@ export default function App() {
                 <span>Allow temporary fallback from realtime to live on startup failure</span>
               </label>
               <span className="field-note">Default is off so real Realtime connect/session.update/response.create/audio errors stay visible. Turn this on only if you explicitly want the old rescue path while debugging.</span>
+            </label>
+
+            <label className="settings-field">
+              <span className="info-label">Voice</span>
+              <select value={settings.ttsVoice} onChange={(event) => setSettings({ ...settings, ttsVoice: event.target.value })}>
+                {TTS_VOICE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="field-note">
+                Shimmer is the new default for Astra because it sounds softer and more naturally feminine.
+                {' '}
+                Nova is a slightly brighter alternative.
+              </span>
+            </label>
+
+            <label className="settings-field settings-field--wide">
+              <span className="info-label">Voice character</span>
+              <span className="field-note">
+                {TTS_VOICE_OPTIONS.find((option) => option.value === settings.ttsVoice)?.note ?? 'Current voice selection'}
+              </span>
             </label>
 
             <label className="settings-field">
@@ -631,6 +710,7 @@ export default function App() {
           </section>
         </div>
       ) : null}
+
     </>
   );
 }

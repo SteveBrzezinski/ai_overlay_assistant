@@ -189,6 +189,12 @@ h1 {
   margin-top: 22px;
 }
 
+.settings-card--focused {
+  border-color: rgba(104, 240, 185, 0.5);
+  box-shadow: 0 0 0 1px rgba(104, 240, 185, 0.18), 0 18px 45px rgba(0, 0, 0, 0.22);
+  animation: settingsFocusPulse 1.4s ease-out 1;
+}
+
 .result-card--success {
   border-color: rgba(104, 240, 185, 0.24);
 }
@@ -385,5 +391,20 @@ h1 {
   .settings-actions button,
   .modal-actions button {
     width: 100%;
+  }
+}
+
+@keyframes settingsFocusPulse {
+  0% {
+    transform: translateY(0);
+    box-shadow: 0 0 0 0 rgba(104, 240, 185, 0.38), 0 18px 45px rgba(0, 0, 0, 0.22);
+  }
+  45% {
+    transform: translateY(-2px);
+    box-shadow: 0 0 0 14px rgba(104, 240, 185, 0), 0 22px 52px rgba(0, 0, 0, 0.28);
+  }
+  100% {
+    transform: translateY(0);
+    box-shadow: 0 0 0 0 rgba(104, 240, 185, 0), 0 18px 45px rgba(0, 0, 0, 0.22);
   }
 }

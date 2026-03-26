@@ -25,6 +25,7 @@ export type TranslateOptions = {
 
 export type AppSettings = {
   ttsMode: 'classic' | 'live' | 'realtime';
+  ttsVoice: string;
   realtimeAllowLiveFallback: boolean;
   ttsFormat: 'wav' | 'mp3';
   firstChunkLeadingSilenceMs: number;
@@ -132,6 +133,27 @@ export type HotkeyStatus = {
   lastTranslationTargetLanguage?: string | null;
 };
 
+export type VoiceCommandResult = {
+  handled: boolean;
+  action:
+    | 'none'
+    | 'show_settings'
+    | 'show_window'
+    | 'hide_window'
+    | 'open_url'
+    | 'open_folder'
+    | 'open_app'
+    | 'close_app'
+    | 'search_web'
+    | 'reply'
+    | 'actions';
+  target?: string | null;
+  source: string;
+  message: string;
+  spokeFeedback: boolean;
+  replyText?: string | null;
+};
+
 const HOTKEY_STATUS_EVENT = 'hotkey-status';
 
 export async function getAppStatus(): Promise<string> {
@@ -178,7 +200,7 @@ export async function captureAndSpeak(
       maxChunkChars: speakOptions.maxChunkChars,
       maxParallelRequests: speakOptions.maxParallelRequests,
       model: speakOptions.model,
-      voice: speakOptions.voice ?? 'alloy',
+      voice: speakOptions.voice,
       firstChunkLeadingSilenceMs: speakOptions.firstChunkLeadingSilenceMs,
     },
   });
@@ -207,4 +229,20 @@ export async function pauseResumeCurrentRun(): Promise<string> {
 
 export async function cancelCurrentRun(): Promise<string> {
   return invoke<string>('cancel_current_run');
+}
+
+export async function showMainWindow(options?: { focusSettings?: boolean }): Promise<void> {
+  return invoke<void>('show_main_window_command', { focusSettings: options?.focusSettings ?? false });
+}
+
+export async function toggleMainWindow(options?: { focusSettings?: boolean }): Promise<void> {
+  return invoke<void>('toggle_main_window_command', { focusSettings: options?.focusSettings ?? false });
+}
+
+export async function hideMainWindow(): Promise<void> {
+  return invoke<void>('hide_main_window_command');
+}
+
+export async function executeVoiceCommand(transcript: string): Promise<VoiceCommandResult> {
+  return invoke<VoiceCommandResult>('execute_voice_command_command', { transcript });
 }

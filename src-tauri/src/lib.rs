@@ -4,6 +4,7 @@ pub mod selection_capture;
 pub mod settings;
 pub mod translation;
 pub mod tts;
+pub mod voice_commands;
 
 mod commands {
     use super::run_controller::{CancelResult, PauseResumeResult, RunController};
@@ -11,6 +12,7 @@ mod commands {
     use super::settings::{AppSettings, LanguageOption, SettingsState, LANGUAGE_OPTIONS};
     use super::translation::{translate_text, TranslateTextOptions, TranslateTextResult};
     use super::tts::{speak_text, SpeakTextOptions, SpeakTextResult};
+    use super::voice_commands::{execute_voice_command, VoiceCommandResult};
     use serde::Serialize;
     use tauri::State;
 
@@ -64,6 +66,15 @@ mod commands {
 
     #[tauri::command]
     pub fn get_language_options() -> Vec<LanguageOption> { LANGUAGE_OPTIONS.to_vec() }
+
+    #[tauri::command]
+    pub fn execute_voice_command_command(
+        transcript: String,
+        app: tauri::AppHandle,
+        settings: State<'_, SettingsState>,
+    ) -> Result<VoiceCommandResult, String> {
+        execute_voice_command(&transcript, &app, &settings.get())
+    }
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -164,4 +175,4 @@ mod commands {
     }
 }
 
-pub use commands::{cancel_current_run, capture_and_speak_command, capture_and_translate_command, capture_selected_text_command, get_language_options, get_settings, pause_resume_current_run, reset_settings, speak_text_command, translate_text_command, update_settings};
+pub use commands::{cancel_current_run, capture_and_speak_command, capture_and_translate_command, capture_selected_text_command, execute_voice_command_command, get_language_options, get_settings, pause_resume_current_run, reset_settings, speak_text_command, translate_text_command, update_settings};

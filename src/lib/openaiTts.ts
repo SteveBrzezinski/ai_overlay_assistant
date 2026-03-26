@@ -25,7 +25,7 @@ export interface SpeechFileResult {
 }
 
 const DEFAULT_MODEL = 'gpt-4o-mini-tts';
-const DEFAULT_VOICE: TtsVoice = 'alloy';
+const DEFAULT_VOICE: TtsVoice = 'shimmer';
 const DEFAULT_FORMAT: TtsFormat = 'mp3';
 
 function getClient(): OpenAI {

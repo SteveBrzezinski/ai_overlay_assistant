@@ -552,7 +552,7 @@ mod windows_impl {
             let result = speak_text_with_progress_and_control(
                 SpeakTextOptions {
                     text: Some(capture.text.clone()),
-                    voice: Some("alloy".to_string()),
+                    voice: None,
                     model: None,
                     format: Some(settings.tts_format.clone()),
                     mode: Some(settings.tts_mode.clone()),

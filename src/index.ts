@@ -21,7 +21,7 @@ async function main(): Promise<void> {
 
   const result = await service.speakText({
     text,
-    voice: (getArg('--voice') as never) ?? 'alloy',
+    voice: (getArg('--voice') as never) ?? 'shimmer',
     format: (getArg('--format') as never) ?? 'wav',
     fileName: getArg('--file-name'),
     outputDir: getArg('--output-dir'),

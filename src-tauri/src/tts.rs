@@ -30,7 +30,7 @@ use tungstenite::{
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini-tts";
 const DEFAULT_REALTIME_MODEL: &str = "gpt-realtime-1.5";
-const DEFAULT_VOICE: &str = "alloy";
+const DEFAULT_VOICE: &str = "shimmer";
 const DEFAULT_FORMAT: &str = "wav";
 const DEFAULT_TTS_MODE: &str = "classic";
 const DEFAULT_MAX_CHUNK_CHARS: usize = 280;
@@ -2929,7 +2929,14 @@ pub fn speak_text_with_progress_and_control(
     let requested_format =
         resolve_format(options.format.or_else(|| Some(settings.tts_format.clone())))?;
     let explicit_model = options.model;
-    let voice = options.voice.unwrap_or_else(|| DEFAULT_VOICE.to_string());
+    let voice = options.voice.unwrap_or_else(|| {
+        let configured = settings.tts_voice.trim();
+        if configured.is_empty() {
+            DEFAULT_VOICE.to_string()
+        } else {
+            configured.to_string()
+        }
+    });
     let autoplay = options.autoplay.unwrap_or(true);
     let max_chunk_chars = resolve_max_chunk_chars(options.max_chunk_chars);
     let max_parallel_requests = resolve_parallel_requests(options.max_parallel_requests);
