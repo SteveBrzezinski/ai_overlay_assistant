@@ -380,10 +380,7 @@ export class LiveSttController {
   }
 
   private currentRecognitionLanguage(): string {
-    if (this.assistantActive) {
-      return mapSpeechRecognitionLanguage(this.config?.language ?? 'de');
-    }
-    return 'en-US';
+    return mapSpeechRecognitionLanguage(this.config?.language ?? 'de');
   }
 
   private currentWakeThreshold(): number {

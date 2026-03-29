@@ -83,6 +83,7 @@ const fallbackSettings: AppSettings = {
   assistantWakeSamples: [],
   assistantCloseSamples: [],
   assistantNameSamples: [],
+  assistantSampleLanguage: 'de',
   assistantWakeThreshold: DEFAULT_ASSISTANT_WAKE_THRESHOLD,
   assistantCloseThreshold: DEFAULT_ASSISTANT_CLOSE_THRESHOLD,
   assistantCueCooldownMs: DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
@@ -146,12 +147,21 @@ function getAssistantNameError(value: string): string | null {
   return null;
 }
 
-function isAssistantCalibrationComplete(settings: AppSettings): boolean {
-  return settings.assistantWakeSamples.length === 4 && settings.assistantCloseSamples.length === 4 && settings.assistantNameSamples.length === 2;
+function normalizeLanguageCode(language: string): string {
+  const trimmed = language.trim().toLowerCase();
+  return trimmed || 'de';
 }
 
-function buildCalibrationSteps(name: string): CalibrationStep[] {
+function isAssistantCalibrationComplete(settings: AppSettings): boolean {
+  return settings.assistantWakeSamples.length === 4 &&
+    settings.assistantCloseSamples.length === 4 &&
+    settings.assistantNameSamples.length === 2 &&
+    normalizeLanguageCode(settings.assistantSampleLanguage) === normalizeLanguageCode(settings.sttLanguage);
+}
+
+function buildCalibrationSteps(name: string, language: string): CalibrationStep[] {
   const safeName = name.trim() || 'AIVA';
+  const recognitionLanguage = mapRecognitionLanguage(language);
   return [
     ...Array.from({ length: 4 }, (_, index) => ({
       id: `wake-${index + 1}`,
@@ -159,7 +169,7 @@ function buildCalibrationSteps(name: string): CalibrationStep[] {
       prompt: `Hey ${safeName}`,
       headline: 'Bitte sagen sie:',
       progress: `${index + 1}/4`,
-      recognitionLanguage: 'en-US',
+      recognitionLanguage,
     })),
     {
       id: 'name-1',
@@ -167,7 +177,7 @@ function buildCalibrationSteps(name: string): CalibrationStep[] {
       prompt: safeName,
       headline: 'Bitte sagen sie nur den Namen:',
       progress: '1/2',
-      recognitionLanguage: 'en-US',
+      recognitionLanguage,
     },
     ...Array.from({ length: 4 }, (_, index) => ({
       id: `close-${index + 1}`,
@@ -175,7 +185,7 @@ function buildCalibrationSteps(name: string): CalibrationStep[] {
       prompt: `Bye ${safeName}`,
       headline: 'Bitte sagen sie:',
       progress: `${index + 1}/4`,
-      recognitionLanguage: 'en-US',
+      recognitionLanguage,
     })),
     {
       id: 'name-2',
@@ -183,7 +193,7 @@ function buildCalibrationSteps(name: string): CalibrationStep[] {
       prompt: safeName,
       headline: 'Bitte sagen sie nur den Namen erneut:',
       progress: '2/2',
-      recognitionLanguage: 'en-US',
+      recognitionLanguage,
     },
   ];
 }
@@ -463,10 +473,14 @@ export default function App() {
   );
   const showLiveSpeedWarning = ['live', 'realtime'].includes(settings.ttsMode) && Math.abs(settings.playbackSpeed - 1) >= 0.01;
   const assistantNameError = getAssistantNameError(settings.assistantName);
-  const assistantCalibrationRequired = settings.assistantName !== savedSettings.assistantName;
+  const assistantCalibrationRequired = settings.assistantName !== savedSettings.assistantName ||
+    normalizeLanguageCode(settings.sttLanguage) !== normalizeLanguageCode(savedSettings.assistantSampleLanguage);
   const assistantCalibrationComplete = isAssistantCalibrationComplete(settings);
   const canSaveSettings = !assistantNameError && (!assistantCalibrationRequired || assistantCalibrationComplete);
-  const assistantCalibrationSteps = useMemo(() => buildCalibrationSteps(settings.assistantName), [settings.assistantName]);
+  const assistantCalibrationSteps = useMemo(
+    () => buildCalibrationSteps(settings.assistantName, settings.sttLanguage),
+    [settings.assistantName, settings.sttLanguage],
+  );
   const currentAssistantTrainingStep = assistantCalibrationSteps[assistantTrainingStepIndex] ?? null;
 
   const persistSettings = async (
@@ -479,8 +493,12 @@ export default function App() {
       setMessage(validationError);
       throw new Error(validationError);
     }
-    if (next.assistantName !== savedSettings.assistantName && !isAssistantCalibrationComplete(next)) {
-      const calibrationError = 'Please finish the assistant wake-word calibration before saving the new name.';
+    if (
+      (next.assistantName !== savedSettings.assistantName ||
+        normalizeLanguageCode(next.sttLanguage) !== normalizeLanguageCode(savedSettings.assistantSampleLanguage)) &&
+      !isAssistantCalibrationComplete(next)
+    ) {
+      const calibrationError = 'Please finish the assistant wake-word calibration for the current name and language before saving.';
       setUiState('error');
       setMessage(calibrationError);
       throw new Error(calibrationError);
@@ -636,6 +654,7 @@ export default function App() {
         assistantWakeSamples: [...assistantTrainingWakeSamples, ...(currentAssistantTrainingStep.target === 'wake' ? [assistantTrainingCapturedTranscript.trim()] : [])],
         assistantCloseSamples: [...assistantTrainingCloseSamples, ...(currentAssistantTrainingStep.target === 'close' ? [assistantTrainingCapturedTranscript.trim()] : [])],
         assistantNameSamples: [...assistantTrainingNameSamples, ...(currentAssistantTrainingStep.target === 'name' ? [assistantTrainingCapturedTranscript.trim()] : [])],
+        assistantSampleLanguage: normalizeLanguageCode(settings.sttLanguage),
       };
       setSettings(nextSettings);
       setAssistantTrainingReadyName(nextSettings.assistantName);
@@ -1068,6 +1087,7 @@ export default function App() {
                       assistantWakeSamples: [],
                       assistantCloseSamples: [],
                       assistantNameSamples: [],
+                      assistantSampleLanguage: normalizeLanguageCode(settings.sttLanguage),
                     });
                     setAssistantTrainingReadyName(null);
                   }}
@@ -1084,10 +1104,10 @@ export default function App() {
               </div>
               {assistantNameError ? <span className="field-note field-note--error">{assistantNameError}</span> : null}
               {!assistantNameError && assistantCalibrationRequired && !assistantCalibrationComplete ? (
-                <span className="field-note field-note--warning">Please train the new name before saving.</span>
+                <span className="field-note field-note--warning">Please train the current name and language before saving.</span>
               ) : null}
               {!assistantNameError && assistantCalibrationComplete && assistantTrainingReadyName === settings.assistantName ? (
-                <span className="field-note field-note--success">Wake-/close-word calibration is ready for this name.</span>
+                <span className="field-note field-note--success">Wake-/close-word calibration is ready for this name and language.</span>
               ) : null}
               <span className="field-note">Use 4-8 characters, one single word. Wake and close phrases stay in English: <code>Hey {settings.assistantName || 'AIVA'}</code> activates, <code>Bye {settings.assistantName || 'AIVA'}</code> deactivates.</span>
             </label>
@@ -1098,9 +1118,19 @@ export default function App() {
                 type="text"
                 placeholder="de"
                 value={settings.sttLanguage}
-                onChange={(event) => setSettings({ ...settings, sttLanguage: event.target.value })}
+                onChange={(event) => {
+                  setSettings({
+                    ...settings,
+                    sttLanguage: event.target.value,
+                    assistantWakeSamples: [],
+                    assistantCloseSamples: [],
+                    assistantNameSamples: [],
+                    assistantSampleLanguage: normalizeLanguageCode(event.target.value),
+                  });
+                  setAssistantTrainingReadyName(null);
+                }}
               />
-              <span className="field-note">While inactive, WebView2 listens in English for the wake phrase. After activation it switches to this language for normal transcription, e.g. <code>de</code> or <code>en</code>.</span>
+              <span className="field-note">This language is now also used while training and listening for wake/close phrases. If you change it, you need to record the training samples again, e.g. <code>de</code> or <code>en</code>.</span>
             </label>
 
             <label className="settings-field">
@@ -1327,7 +1357,7 @@ export default function App() {
             <div className="training-phrase-box">
               <strong>{currentAssistantTrainingStep.prompt}</strong>
             </div>
-            <p className="field-note">Live transcription is paused while calibration is open. Click Start, say the phrase, click Stop, then confirm or retry.</p>
+            <p className="field-note">Live transcription is paused while calibration is open. Click Start, say the phrase, click Stop, then confirm or retry. Training currently uses <code>{currentAssistantTrainingStep.recognitionLanguage}</code>.</p>
             <div className="modal-actions">
               <button type="button" className="primary-button" disabled={isAssistantTrainingRecording} onClick={startAssistantTrainingRecording}>
                 Start

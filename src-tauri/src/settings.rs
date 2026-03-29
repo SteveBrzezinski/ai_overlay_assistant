@@ -31,6 +31,7 @@ pub struct AppSettings {
     pub assistant_wake_samples: Vec<String>,
     pub assistant_close_samples: Vec<String>,
     pub assistant_name_samples: Vec<String>,
+    pub assistant_sample_language: String,
     pub assistant_wake_threshold: u8,
     pub assistant_close_threshold: u8,
     pub assistant_cue_cooldown_ms: u32,
@@ -51,6 +52,7 @@ impl Default for AppSettings {
             assistant_wake_samples: Vec::new(),
             assistant_close_samples: Vec::new(),
             assistant_name_samples: Vec::new(),
+            assistant_sample_language: "de".to_string(),
             assistant_wake_threshold: DEFAULT_ASSISTANT_WAKE_THRESHOLD,
             assistant_close_threshold: DEFAULT_ASSISTANT_CLOSE_THRESHOLD,
             assistant_cue_cooldown_ms: DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
@@ -166,6 +168,11 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         "AIVA".to_string()
     } else {
         settings.assistant_name.trim().to_string()
+    };
+    settings.assistant_sample_language = if settings.assistant_sample_language.trim().is_empty() {
+        settings.stt_language.clone()
+    } else {
+        settings.assistant_sample_language.trim().to_lowercase()
     };
     settings.assistant_wake_samples = sanitize_phrase_samples(settings.assistant_wake_samples, 4);
     settings.assistant_close_samples = sanitize_phrase_samples(settings.assistant_close_samples, 4);
