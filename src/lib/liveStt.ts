@@ -24,6 +24,9 @@ export type LiveSttConfig = {
   language: string;
   assistantName: string;
   activateImmediately?: boolean;
+  wakeSamples?: string[];
+  closeSamples?: string[];
+  nameSamples?: string[];
 };
 
 export type LiveSttCallbacks = {
@@ -74,6 +77,9 @@ export class LiveSttController {
       language: config.language,
       assistantName: sanitizeAssistantName(config.assistantName),
       activateImmediately: config.activateImmediately ?? false,
+      wakeSamples: sanitizeSamples(config.wakeSamples, 4),
+      closeSamples: sanitizeSamples(config.closeSamples, 4),
+      nameSamples: sanitizeSamples(config.nameSamples, 2),
     };
     this.callbacks = callbacks;
     this.running = true;
@@ -198,7 +204,7 @@ export class LiveSttController {
     }
 
     if (!this.assistantActive) {
-      if (matchesCuePhrase(trimmed, 'hey', this.currentAssistantName())) {
+      if (matchesCuePhrase(trimmed, 'hey', this.currentAssistantName(), this.config?.wakeSamples ?? [], this.config?.nameSamples ?? [])) {
         this.assistantActive = true;
         this.reportAssistantState(true, `Wake phrase detected: ${this.currentWakePhrase()}.`, 'wake-word', trimmed);
         this.restartRecognitionForCurrentMode();
@@ -216,7 +222,7 @@ export class LiveSttController {
       return;
     }
 
-    if (matchesCuePhrase(trimmed, 'bye', this.currentAssistantName())) {
+    if (matchesCuePhrase(trimmed, 'bye', this.currentAssistantName(), this.config?.closeSamples ?? [], this.config?.nameSamples ?? [])) {
       this.assistantActive = false;
       this.reportAssistantState(false, `Close phrase detected: ${this.currentClosePhrase()}.`, 'close-word', trimmed);
       this.restartRecognitionForCurrentMode();
@@ -296,7 +302,20 @@ function sanitizeAssistantName(value?: string | null): string {
   return trimmed ? trimmed : 'AIVA';
 }
 
-function matchesCuePhrase(transcript: string, cue: 'hey' | 'bye', aiName: string): boolean {
+function sanitizeSamples(samples?: string[] | null, max: number = Number.MAX_SAFE_INTEGER): string[] {
+  return (samples ?? [])
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+
+function matchesCuePhrase(
+  transcript: string,
+  cue: 'hey' | 'bye',
+  aiName: string,
+  trainedPhrases: string[],
+  trainedNameSamples: string[],
+): boolean {
   const normalized = normalizeForMatch(transcript);
   if (!normalized) {
     return false;
@@ -307,6 +326,12 @@ function matchesCuePhrase(transcript: string, cue: 'hey' | 'bye', aiName: string
   const compactText = normalized.replace(/\s+/g, '');
   const compactCueName = `${cue}${compactName}`;
   const nameThreshold = Math.max(1, Math.floor(compactName.length / 4));
+  const normalizedSamples = sanitizeSamples(trainedPhrases).map((value) => normalizeForMatch(value).replace(/\s+/g, ''));
+  const normalizedNameSamples = sanitizeSamples(trainedNameSamples).map((value) => normalizeForMatch(value).replace(/\s+/g, ''));
+
+  if (normalizedSamples.some((sample) => sample && (compactText.includes(sample) || levenshtein(compactText, sample) <= Math.max(1, Math.floor(sample.length / 5))))) {
+    return true;
+  }
 
   if (compactText.includes(compactCueName)) {
     return true;
@@ -328,6 +353,9 @@ function matchesCuePhrase(transcript: string, cue: 'hey' | 'bye', aiName: string
         continue;
       }
       if (levenshtein(candidate, compactName) <= nameThreshold) {
+        return true;
+      }
+      if (normalizedNameSamples.some((sample) => sample && levenshtein(candidate, sample) <= nameThreshold)) {
         return true;
       }
     }

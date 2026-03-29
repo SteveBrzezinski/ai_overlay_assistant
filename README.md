@@ -81,6 +81,7 @@ Das Ziel ist:
 - laufende Mikrofon-Transkription mit Start/Stop direkt in der UI
 - laufende Mikrofon-Transkription mit WebView2 / Windows Speech Recognition
 - Wake-/Close-Word-Flow mit konfigurierbarem Assistentennamen (Default: `AIVA`) sowie englischen Phrasen `Hey AIVA` / `Bye AIVA`
+- Kalibrier-Modal für den Assistentennamen: 4 Wake-Phrasen, 4 Close-Phrasen und 2 Namensproben per WebView2-Erkennung
 - zusätzliche globale Hotkeys zum Aktivieren/Deaktivieren des Live-Assistenten
 - STT-Debug-Logs mit erkanntem Transkript und Aktiv-/Inaktiv-Status für den WebView2-Livepfad
 

@@ -25,6 +25,9 @@ pub struct AppSettings {
     pub openai_api_key: String,
     pub stt_language: String,
     pub assistant_name: String,
+    pub assistant_wake_samples: Vec<String>,
+    pub assistant_close_samples: Vec<String>,
+    pub assistant_name_samples: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -39,6 +42,9 @@ impl Default for AppSettings {
             openai_api_key: String::new(),
             stt_language: "de".to_string(),
             assistant_name: "AIVA".to_string(),
+            assistant_wake_samples: Vec::new(),
+            assistant_close_samples: Vec::new(),
+            assistant_name_samples: Vec::new(),
         }
     }
 }
@@ -152,6 +158,9 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     } else {
         settings.assistant_name.trim().to_string()
     };
+    settings.assistant_wake_samples = sanitize_phrase_samples(settings.assistant_wake_samples, 4);
+    settings.assistant_close_samples = sanitize_phrase_samples(settings.assistant_close_samples, 4);
+    settings.assistant_name_samples = sanitize_phrase_samples(settings.assistant_name_samples, 2);
 
     settings
 }
@@ -195,6 +204,15 @@ fn write_settings_file(path: &Path, settings: &AppSettings) -> Result<(), String
         .map_err(|error| format!("Failed to serialize settings: {error}"))?;
     fs::write(path, payload)
         .map_err(|error| format!("Failed to write config file '{}': {error}", path.display()))
+}
+
+fn sanitize_phrase_samples(samples: Vec<String>, max_len: usize) -> Vec<String> {
+    samples
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .take(max_len)
+        .collect()
 }
 
 fn sanitize_playback_speed(value: f32) -> f32 {

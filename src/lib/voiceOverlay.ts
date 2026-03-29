@@ -33,6 +33,9 @@ export type AppSettings = {
   openaiApiKey: string;
   sttLanguage: string;
   assistantName: string;
+  assistantWakeSamples: string[];
+  assistantCloseSamples: string[];
+  assistantNameSamples: string[];
 };
 
 export type LanguageOption = {
