@@ -49,6 +49,9 @@ pub struct HotkeyStatusPayload {
     pub first_audio_to_playback_ms: Option<u64>,
     pub last_translation_text: Option<String>,
     pub last_translation_target_language: Option<String>,
+    pub last_stt_provider: Option<String>,
+    pub last_stt_debug_log_path: Option<String>,
+    pub last_stt_active_transcript: Option<String>,
 }
 
 #[derive(Default)]
@@ -81,6 +84,9 @@ pub(crate) struct HotkeySnapshot {
     first_audio_to_playback_ms: Option<u64>,
     last_translation_text: Option<String>,
     last_translation_target_language: Option<String>,
+    last_stt_provider: Option<String>,
+    last_stt_debug_log_path: Option<String>,
+    last_stt_active_transcript: Option<String>,
 }
 
 pub struct HotkeyState {
@@ -139,6 +145,9 @@ impl HotkeyState {
             first_audio_to_playback_ms: snapshot.first_audio_to_playback_ms,
             last_translation_text: snapshot.last_translation_text.clone(),
             last_translation_target_language: snapshot.last_translation_target_language.clone(),
+            last_stt_provider: snapshot.last_stt_provider.clone(),
+            last_stt_debug_log_path: snapshot.last_stt_debug_log_path.clone(),
+            last_stt_active_transcript: snapshot.last_stt_active_transcript.clone(),
         }
     }
 
@@ -671,9 +680,10 @@ mod windows_impl {
                 }
             };
 
+            let settings = app_handle.state::<SettingsState>().get();
+
             run_access.check_cancelled().ok();
             run_access.update_phase("translating_text");
-            let settings = app_handle.state::<SettingsState>().get();
             let translation = translate_text(TranslateTextOptions {
                 text: Some(capture.text.clone()),
                 target_language: Some(settings.translation_target_language.clone()),

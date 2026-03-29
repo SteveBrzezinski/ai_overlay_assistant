@@ -31,11 +31,24 @@ export type AppSettings = {
   translationTargetLanguage: string;
   playbackSpeed: number;
   openaiApiKey: string;
+  sttLanguage: string;
 };
 
 export type LanguageOption = {
   code: string;
   label: string;
+};
+
+export type SttDebugEntry = {
+  provider: string;
+  transcript: string;
+  latencyMs: number;
+  ok: boolean;
+  detail?: string | null;
+};
+
+export type AppendSttDebugLogResult = {
+  debugLogPath: string;
 };
 
 export type CaptureAndSpeakResult = {
@@ -130,6 +143,9 @@ export type HotkeyStatus = {
   firstAudioToPlaybackMs?: number | null;
   lastTranslationText?: string | null;
   lastTranslationTargetLanguage?: string | null;
+  lastSttProvider?: string | null;
+  lastSttDebugLogPath?: string | null;
+  lastSttActiveTranscript?: string | null;
 };
 
 const HOTKEY_STATUS_EVENT = 'hotkey-status';
@@ -197,6 +213,22 @@ export async function captureAndTranslate(
       model: translateOptions.model,
       sourceLanguage: translateOptions.sourceLanguage,
       targetLanguage: translateOptions.targetLanguage,
+    },
+  });
+}
+
+export async function appendSttDebugLog(options: {
+  sessionId: string;
+  selectedProvider: string;
+  activeTranscript: string;
+  entries: SttDebugEntry[];
+}): Promise<AppendSttDebugLogResult> {
+  return invoke<AppendSttDebugLogResult>('append_stt_debug_log_command', {
+    options: {
+      sessionId: options.sessionId,
+      selectedProvider: options.selectedProvider,
+      activeTranscript: options.activeTranscript,
+      entries: options.entries,
     },
   });
 }

@@ -321,6 +321,26 @@ h1 {
   color: #edf4ff;
 }
 
+.stt-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.stt-provider-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(160, 186, 255, 0.16);
+  background: rgba(10, 16, 31, 0.55);
+}
+
+.stt-provider-card p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

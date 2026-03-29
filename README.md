@@ -6,7 +6,7 @@ Windows-first Tauri app for selection-based AI flows with **global run control**
 
 - UI settings are persistent and stored in a local config file at `.voice-overlay-assistant.config.json` in the project root.
 - The file is created on first start and is git-ignored.
-- The settings UI now covers speech mode (`classic` / `live` / `realtime` experimental), the optional realtime fallback toggle, audio format, first-chunk lead-in, speech playback speed, translation target language, and the OpenAI API key.
+- The settings UI now covers speech mode (`classic` / `live` / `realtime` experimental), the optional realtime fallback toggle, audio format, first-chunk lead-in, speech playback speed, translation target language, the WebView2 STT language hint, and the OpenAI API key.
 - If an OpenAI API key is saved in the UI, it overrides `OPENAI_API_KEY` from `.env`. If the UI field is empty, `.env` remains the fallback.
 - The Settings view includes a reset-to-default action with confirmation before anything is cleared.
 - The default UI language is English, and the default translation target language is English.
@@ -76,6 +76,9 @@ Das Ziel ist:
   - Reset auf Default-Werte mit Bestätigung
 - Settings werden lokal persistent gespeichert
 - Timing-/Chunk-Logging für Debugging inkl. aktivem Modus, erstem Audio-Empfang, erstem hörbaren Playback-Start und sichtbarer Startlatenz
+- laufende Mikrofon-Transkription mit Start/Stop direkt in der UI
+- laufende Mikrofon-Transkription mit WebView2 / Windows Speech Recognition
+- STT-Debug-Logs mit dem erkannten Transkript und Statusdaten für den WebView2-Livepfad
 
 ## Bedienung
 

@@ -4,7 +4,7 @@ use voice_overlay_assistant::{hotkey, run_controller, settings};
 
 #[tauri::command]
 fn app_status() -> &'static str {
-    "Voice Overlay Assistant is ready: global hotkeys can capture selected text, then speak it with classic chunked OpenAI TTS, live low-latency streaming, or experimental realtime websocket audio with an optional live fallback, or translate it into the configured target language first."
+    "Voice Overlay Assistant is ready: global hotkeys can capture selected text for TTS or translation, and the UI can run continuous microphone transcription with WebView2 speech recognition."
 }
 
 fn main() {
@@ -31,6 +31,7 @@ fn main() {
             voice_overlay_assistant::update_settings,
             voice_overlay_assistant::reset_settings,
             voice_overlay_assistant::get_language_options,
+            voice_overlay_assistant::append_stt_debug_log_command,
             voice_overlay_assistant::pause_resume_current_run,
             voice_overlay_assistant::cancel_current_run
         ])
