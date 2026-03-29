@@ -55,8 +55,6 @@ const fallbackSettings: AppSettings = {
   translationTargetLanguage: 'en',
   playbackSpeed: 1,
   openaiApiKey: '',
-  sttProvider: 'webview2',
-  sttCompareAll: false,
   sttLanguage: 'de',
 };
 

@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use voice_overlay_assistant::{hotkey, run_controller, settings, stt};
+use voice_overlay_assistant::{hotkey, run_controller, settings};
 
 #[tauri::command]
 fn app_status() -> &'static str {
-    "Voice Overlay Assistant is ready: global hotkeys can capture selected text for TTS or translation, and the UI can also run continuous microphone transcription with WebView2 speech, OpenAI realtime speech-to-text, or local Whisper for comparison."
+    "Voice Overlay Assistant is ready: global hotkeys can capture selected text for TTS or translation, and the UI can run continuous microphone transcription with WebView2 speech recognition."
 }
 
 fn main() {
@@ -15,7 +15,6 @@ fn main() {
         .manage(hotkey::HotkeyState::default())
         .manage(run_controller::RunController::default())
         .manage(settings_state)
-        .manage(stt::SttState::default())
         .setup(|app| {
             hotkey::init_hotkey(&app.handle());
             Ok(())
@@ -32,11 +31,6 @@ fn main() {
             voice_overlay_assistant::update_settings,
             voice_overlay_assistant::reset_settings,
             voice_overlay_assistant::get_language_options,
-            voice_overlay_assistant::start_openai_realtime_transcription_command,
-            voice_overlay_assistant::append_openai_realtime_audio_command,
-            voice_overlay_assistant::poll_openai_realtime_transcription_command,
-            voice_overlay_assistant::stop_openai_realtime_transcription_command,
-            voice_overlay_assistant::transcribe_wav_chunk_local_command,
             voice_overlay_assistant::append_stt_debug_log_command,
             voice_overlay_assistant::pause_resume_current_run,
             voice_overlay_assistant::cancel_current_run

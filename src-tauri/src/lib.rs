@@ -10,14 +10,7 @@ mod commands {
     use super::run_controller::{CancelResult, PauseResumeResult, RunController};
     use super::selection_capture::{capture_selected_text, CaptureOptions, CaptureResult};
     use super::settings::{AppSettings, LanguageOption, SettingsState, LANGUAGE_OPTIONS};
-    use super::stt::{
-        append_stt_debug_log, append_openai_realtime_audio, poll_openai_realtime_transcription,
-        start_openai_realtime_transcription, stop_openai_realtime_transcription,
-        transcribe_wav_chunk_local, AppendSttDebugLogOptions, AppendSttDebugLogResult,
-        LocalSttChunkOptions, LocalSttChunkResult, RealtimeAudioChunkOptions,
-        RealtimeTranscriptEvent, RealtimeTranscriptionSessionInfo,
-        StartRealtimeTranscriptionOptions, SttState,
-    };
+    use super::stt::{append_stt_debug_log, AppendSttDebugLogOptions, AppendSttDebugLogResult};
     use super::translation::{translate_text, TranslateTextOptions, TranslateTextResult};
     use super::tts::{speak_text, SpeakTextOptions, SpeakTextResult};
     use serde::Serialize;
@@ -73,44 +66,6 @@ mod commands {
 
     #[tauri::command]
     pub fn get_language_options() -> Vec<LanguageOption> { LANGUAGE_OPTIONS.to_vec() }
-
-    #[tauri::command]
-    pub fn start_openai_realtime_transcription_command(
-        options: Option<StartRealtimeTranscriptionOptions>,
-        settings: State<'_, SettingsState>,
-        stt_state: State<'_, SttState>,
-    ) -> Result<RealtimeTranscriptionSessionInfo, String> {
-        start_openai_realtime_transcription(options, &settings.get(), &stt_state)
-    }
-
-    #[tauri::command]
-    pub fn append_openai_realtime_audio_command(
-        options: RealtimeAudioChunkOptions,
-        stt_state: State<'_, SttState>,
-    ) -> Result<Vec<RealtimeTranscriptEvent>, String> {
-        append_openai_realtime_audio(options, &stt_state)
-    }
-
-    #[tauri::command]
-    pub fn poll_openai_realtime_transcription_command(
-        stt_state: State<'_, SttState>,
-    ) -> Result<Vec<RealtimeTranscriptEvent>, String> {
-        poll_openai_realtime_transcription(&stt_state)
-    }
-
-    #[tauri::command]
-    pub fn stop_openai_realtime_transcription_command(
-        stt_state: State<'_, SttState>,
-    ) -> Result<Vec<RealtimeTranscriptEvent>, String> {
-        stop_openai_realtime_transcription(&stt_state)
-    }
-
-    #[tauri::command]
-    pub fn transcribe_wav_chunk_local_command(
-        options: LocalSttChunkOptions,
-    ) -> Result<LocalSttChunkResult, String> {
-        transcribe_wav_chunk_local(options)
-    }
 
     #[tauri::command]
     pub fn append_stt_debug_log_command(
@@ -218,4 +173,4 @@ mod commands {
     }
 }
 
-pub use commands::{append_openai_realtime_audio_command, append_stt_debug_log_command, cancel_current_run, capture_and_speak_command, capture_and_translate_command, capture_selected_text_command, get_language_options, get_settings, pause_resume_current_run, poll_openai_realtime_transcription_command, reset_settings, speak_text_command, start_openai_realtime_transcription_command, stop_openai_realtime_transcription_command, transcribe_wav_chunk_local_command, translate_text_command, update_settings};
+pub use commands::{append_stt_debug_log_command, cancel_current_run, capture_and_speak_command, capture_and_translate_command, capture_selected_text_command, get_language_options, get_settings, pause_resume_current_run, reset_settings, speak_text_command, translate_text_command, update_settings};
