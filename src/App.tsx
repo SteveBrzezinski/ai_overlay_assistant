@@ -56,7 +56,7 @@ const fallbackSettings: AppSettings = {
   playbackSpeed: 1,
   openaiApiKey: '',
   sttProvider: 'webview2',
-  sttCompareAll: true,
+  sttCompareAll: false,
   sttLanguage: 'de',
 };
 

@@ -39,7 +39,7 @@ impl Default for AppSettings {
             playback_speed: DEFAULT_PLAYBACK_SPEED,
             openai_api_key: String::new(),
             stt_provider: "webview2".to_string(),
-            stt_compare_all: true,
+            stt_compare_all: false,
             stt_language: "de".to_string(),
         }
     }

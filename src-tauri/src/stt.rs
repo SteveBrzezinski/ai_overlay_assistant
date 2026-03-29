@@ -140,20 +140,22 @@ pub fn start_openai_realtime_transcription(
         &mut socket,
         json!({
             "type": "transcription_session.update",
-            "input_audio_format": "pcm16",
-            "input_audio_transcription": {
-                "model": model,
-                "language": language,
-                "prompt": "Return a clean readable transcript with punctuation."
-            },
-            "turn_detection": {
-                "type": "server_vad",
-                "threshold": 0.5,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 500
-            },
-            "input_audio_noise_reduction": {
-                "type": "near_field"
+            "session": {
+                "input_audio_format": "pcm16",
+                "input_audio_transcription": {
+                    "model": model,
+                    "language": language,
+                    "prompt": "Return a clean readable transcript with punctuation."
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 500
+                },
+                "input_audio_noise_reduction": {
+                    "type": "near_field"
+                }
             }
         }),
     )?;
@@ -259,7 +261,8 @@ pub fn transcribe_wav_chunk_local(options: LocalSttChunkOptions) -> Result<Local
         .model
         .unwrap_or_else(|| DEFAULT_LOCAL_WHISPER_MODEL.to_string());
 
-    let output = std::process::Command::new("python")
+    let whisper_python = resolve_local_whisper_python();
+    let output = std::process::Command::new(&whisper_python)
         .args([
             "-m",
             "whisper",
@@ -281,7 +284,7 @@ pub fn transcribe_wav_chunk_local(options: LocalSttChunkOptions) -> Result<Local
                 .to_string_lossy(),
         ])
         .output()
-        .map_err(|err| format!("Failed to start local Whisper CLI: {err}"))?;
+        .map_err(|err| format!("Failed to start local Whisper CLI via '{}': {err}", whisper_python.display()))?;
 
     let latency_ms = millis_u64(started.elapsed());
     let transcript_path = chunk_path.with_extension("txt");
@@ -302,6 +305,11 @@ pub fn transcribe_wav_chunk_local(options: LocalSttChunkOptions) -> Result<Local
             } else {
                 None
             }
+        } else if stderr.contains("No module named whisper") {
+            Some(format!(
+                "Local Whisper is not installed for '{}'. Create/install the project-local .venv-whisper or install openai-whisper there.",
+                whisper_python.display()
+            ))
         } else if stderr.is_empty() {
             Some(format!("Local Whisper failed with status {}", output.status))
         } else {
@@ -556,6 +564,23 @@ fn write_temp_audio_chunk(bytes: &[u8]) -> Result<PathBuf, String> {
     fs::write(&path, bytes)
         .map_err(|err| format!("Failed to write STT WAV chunk '{}': {err}", path.display()))?;
     Ok(path)
+}
+
+fn resolve_local_whisper_python() -> PathBuf {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("Cargo manifest parent should exist")
+        .to_path_buf();
+    let project_local_python = project_root
+        .join(".venv-whisper")
+        .join("Scripts")
+        .join("python.exe");
+
+    if project_local_python.exists() {
+        project_local_python
+    } else {
+        PathBuf::from("python")
+    }
 }
 
 fn debug_log_path_for_session(session_id: &str) -> Result<PathBuf, String> {
