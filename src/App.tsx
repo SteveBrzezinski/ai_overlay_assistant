@@ -1105,44 +1105,50 @@ export default function App() {
 
             <label className="settings-field">
               <span className="info-label">Wake match threshold</span>
-              <input
-                type="number"
-                min={ASSISTANT_MATCH_THRESHOLD_MIN}
-                max={ASSISTANT_MATCH_THRESHOLD_MAX}
-                step="1"
-                value={settings.assistantWakeThreshold}
-                onChange={(event) => setSettings({
-                  ...settings,
-                  assistantWakeThreshold: parseBoundedInteger(
-                    event.target.value,
-                    settings.assistantWakeThreshold,
-                    ASSISTANT_MATCH_THRESHOLD_MIN,
-                    ASSISTANT_MATCH_THRESHOLD_MAX,
-                  ),
-                })}
-              />
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={ASSISTANT_MATCH_THRESHOLD_MIN}
+                  max={ASSISTANT_MATCH_THRESHOLD_MAX}
+                  step="1"
+                  value={settings.assistantWakeThreshold}
+                  onChange={(event) => setSettings({
+                    ...settings,
+                    assistantWakeThreshold: parseBoundedInteger(
+                      event.target.value,
+                      settings.assistantWakeThreshold,
+                      ASSISTANT_MATCH_THRESHOLD_MIN,
+                      ASSISTANT_MATCH_THRESHOLD_MAX,
+                    ),
+                  })}
+                />
+                <output>{settings.assistantWakeThreshold}</output>
+              </div>
               <span className="field-note">Higher is stricter. Recognition status shows the live wake score against this threshold.</span>
             </label>
 
             <label className="settings-field">
               <span className="info-label">Close match threshold</span>
-              <input
-                type="number"
-                min={ASSISTANT_MATCH_THRESHOLD_MIN}
-                max={ASSISTANT_MATCH_THRESHOLD_MAX}
-                step="1"
-                value={settings.assistantCloseThreshold}
-                onChange={(event) => setSettings({
-                  ...settings,
-                  assistantCloseThreshold: parseBoundedInteger(
-                    event.target.value,
-                    settings.assistantCloseThreshold,
-                    ASSISTANT_MATCH_THRESHOLD_MIN,
-                    ASSISTANT_MATCH_THRESHOLD_MAX,
-                  ),
-                })}
-              />
-              <span className="field-note">Keep this slightly higher than wake detection if you want deactivation to be more conservative.</span>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={ASSISTANT_MATCH_THRESHOLD_MIN}
+                  max={ASSISTANT_MATCH_THRESHOLD_MAX}
+                  step="1"
+                  value={settings.assistantCloseThreshold}
+                  onChange={(event) => setSettings({
+                    ...settings,
+                    assistantCloseThreshold: parseBoundedInteger(
+                      event.target.value,
+                      settings.assistantCloseThreshold,
+                      ASSISTANT_MATCH_THRESHOLD_MIN,
+                      ASSISTANT_MATCH_THRESHOLD_MAX,
+                    ),
+                  })}
+                />
+                <output>{settings.assistantCloseThreshold}</output>
+              </div>
+              <span className="field-note">Lower reacts easier, higher is stricter.</span>
             </label>
 
             <label className="settings-field">
