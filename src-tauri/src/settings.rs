@@ -24,6 +24,7 @@ pub struct AppSettings {
     pub playback_speed: f32,
     pub openai_api_key: String,
     pub stt_language: String,
+    pub assistant_name: String,
 }
 
 impl Default for AppSettings {
@@ -37,6 +38,7 @@ impl Default for AppSettings {
             playback_speed: DEFAULT_PLAYBACK_SPEED,
             openai_api_key: String::new(),
             stt_language: "de".to_string(),
+            assistant_name: "AIVA".to_string(),
         }
     }
 }
@@ -144,6 +146,11 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         "de".to_string()
     } else {
         settings.stt_language.trim().to_lowercase()
+    };
+    settings.assistant_name = if settings.assistant_name.trim().is_empty() {
+        "AIVA".to_string()
+    } else {
+        settings.assistant_name.trim().to_string()
     };
 
     settings

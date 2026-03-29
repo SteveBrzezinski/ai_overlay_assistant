@@ -24,6 +24,7 @@ import {
   getLanguageOptions,
   getSettings,
   onHotkeyStatus,
+  onLiveSttControl,
   resetSettings,
   updateSettings,
   type AppSettings,
@@ -31,7 +32,7 @@ import {
   type LanguageOption,
   type SttDebugEntry,
 } from './lib/voiceOverlay';
-import { LiveSttController, type ProviderSnapshot, type SttProviderId } from './lib/liveStt';
+import { LiveSttController, type AssistantStateSnapshot, type ProviderSnapshot, type SttProviderId } from './lib/liveStt';
 
 type UiState = 'idle' | 'working' | 'success' | 'error';
 type ProviderSnapshotMap = Partial<Record<SttProviderId, ProviderSnapshot>>;
@@ -42,6 +43,8 @@ const fallbackHotkeyStatus: HotkeyStatus = {
   translateAccelerator: 'Ctrl+Shift+T',
   pauseResumeAccelerator: 'Ctrl+Shift+P',
   cancelAccelerator: 'Ctrl+Shift+X',
+  activateAccelerator: 'Ctrl+Shift+A',
+  deactivateAccelerator: 'Ctrl+Shift+D',
   platform: 'unsupported',
   state: 'registering',
   message: 'Checking global hotkeys...',
@@ -56,6 +59,7 @@ const fallbackSettings: AppSettings = {
   playbackSpeed: 1,
   openaiApiKey: '',
   sttLanguage: 'de',
+  assistantName: 'AIVA',
 };
 
 function formatTimestamp(value?: number | null): string {
@@ -141,10 +145,15 @@ export default function App() {
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isLiveTranscribing, setIsLiveTranscribing] = useState(false);
   const [liveTranscriptionStatus, setLiveTranscriptionStatus] = useState('Live transcription is stopped.');
+  const [assistantActive, setAssistantActive] = useState(false);
+  const [assistantStateDetail, setAssistantStateDetail] = useState('Listening is stopped.');
+  const [assistantWakePhrase, setAssistantWakePhrase] = useState('Hey AIVA');
+  const [assistantClosePhrase, setAssistantClosePhrase] = useState('Bye AIVA');
   const [liveTranscript, setLiveTranscript] = useState('');
   const [sttProviderSnapshots, setSttProviderSnapshots] = useState<ProviderSnapshotMap>({});
   const [liveTranscriptionSessionId, setLiveTranscriptionSessionId] = useState('');
   const liveSttControllerRef = useRef<LiveSttController | null>(null);
+  const startLiveTranscriptionRef = useRef<(options?: { activateImmediately?: boolean }) => Promise<void>>(async () => undefined);
   const sttDebugWriteTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -154,6 +163,8 @@ export default function App() {
         setHotkeyStatus(hotkey);
         setSettings(appSettings);
         setSavedSettings(appSettings);
+        setAssistantWakePhrase(`Hey ${appSettings.assistantName}`);
+        setAssistantClosePhrase(`Bye ${appSettings.assistantName}`);
         setLanguageOptions(languages);
         setMessage(hotkey.message);
         setCapturedPreview(hotkey.lastCapturedText ?? '');
@@ -189,6 +200,7 @@ export default function App() {
       });
 
     let unlisten: (() => void | Promise<void>) | undefined;
+    let unlistenLiveSttControl: (() => void | Promise<void>) | undefined;
     void onHotkeyStatus((status) => {
       setHotkeyStatus(status);
       setMessage(status.message);
@@ -233,8 +245,28 @@ export default function App() {
       unlisten = cleanup;
     });
 
+    void onLiveSttControl((event) => {
+      if (event.action === 'activate') {
+        if (liveSttControllerRef.current) {
+          liveSttControllerRef.current.manualActivate('hotkey');
+        } else {
+          void startLiveTranscriptionRef.current({ activateImmediately: true });
+        }
+        return;
+      }
+
+      if (liveSttControllerRef.current) {
+        liveSttControllerRef.current.manualDeactivate('hotkey');
+      } else {
+        setLiveTranscriptionStatus('Deactivate hotkey received, but live transcription is not running yet.');
+      }
+    }).then((cleanup) => {
+      unlistenLiveSttControl = cleanup;
+    });
+
     return () => {
       void unlisten?.();
+      void unlistenLiveSttControl?.();
     };
   }, []);
 
@@ -249,6 +281,13 @@ export default function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isLiveTranscribing) {
+      setAssistantWakePhrase(`Hey ${settings.assistantName || 'AIVA'}`);
+      setAssistantClosePhrase(`Bye ${settings.assistantName || 'AIVA'}`);
+    }
+  }, [isLiveTranscribing, settings.assistantName]);
 
   useEffect(() => {
     if (!isLiveTranscribing || !liveTranscriptionSessionId) {
@@ -327,6 +366,18 @@ export default function App() {
     }
 
     return savedSettings;
+  };
+
+  const applyAssistantState = (snapshot: AssistantStateSnapshot): void => {
+    setAssistantActive(snapshot.active);
+    setAssistantWakePhrase(snapshot.wakePhrase);
+    setAssistantClosePhrase(snapshot.closePhrase);
+    setAssistantStateDetail(snapshot.reason);
+    setLiveTranscriptionStatus(snapshot.reason);
+    if (!snapshot.active) {
+      setLiveTranscript('');
+      setLastSttActiveTranscript('');
+    }
   };
 
   const runReadSelectedText = async (): Promise<void> => {
@@ -416,7 +467,7 @@ export default function App() {
     }
   };
 
-  const startLiveTranscription = async (): Promise<void> => {
+  const startLiveTranscription = async (options?: { activateImmediately?: boolean }): Promise<void> => {
     let activeSettings = savedSettings;
 
     try {
@@ -438,28 +489,39 @@ export default function App() {
     setLastSttDebugLogPath('');
     setLastSttProvider('webview2');
     setLastSttActiveTranscript('');
+    setAssistantWakePhrase(`Hey ${activeSettings.assistantName}`);
+    setAssistantClosePhrase(`Bye ${activeSettings.assistantName}`);
+    setAssistantStateDetail('Starting wake-word listener...');
     setIsLiveTranscribing(true);
 
     try {
       await controller.start(
         {
           language: activeSettings.sttLanguage,
+          assistantName: activeSettings.assistantName,
+          activateImmediately: options?.activateImmediately,
         },
         {
           onStatus: (status) => {
             setLiveTranscriptionStatus(status);
           },
+          onAssistantStateChange: (snapshot) => {
+            applyAssistantState(snapshot);
+          },
           onProviderSnapshot: (snapshot) => {
             setSttProviderSnapshots((current) => ({ ...current, [snapshot.provider]: snapshot }));
-            if (snapshot.transcript) {
+            setLastSttProvider(snapshot.provider);
+            if (
+              snapshot.transcript &&
+              !snapshot.detail?.includes('wake-word') &&
+              !snapshot.detail?.includes('close-word')
+            ) {
               setLiveTranscript(snapshot.transcript);
-              setLastSttProvider(snapshot.provider);
               setLastSttActiveTranscript(snapshot.transcript);
             }
           },
         },
       );
-      setLiveTranscriptionStatus('Live transcription is running.');
     } catch (error: unknown) {
       const text = error instanceof Error ? error.message : String(error);
       setIsLiveTranscribing(false);
@@ -467,12 +529,17 @@ export default function App() {
     }
   };
 
+  startLiveTranscriptionRef.current = startLiveTranscription;
+
   const stopLiveTranscription = async (): Promise<void> => {
     if (liveSttControllerRef.current) {
       await liveSttControllerRef.current.stop();
       liveSttControllerRef.current = null;
     }
     setIsLiveTranscribing(false);
+    setAssistantActive(false);
+    setAssistantStateDetail('Listening is stopped.');
+    setLiveTranscript('');
     setLiveTranscriptionStatus('Live transcription is stopped.');
   };
 
@@ -497,6 +564,10 @@ export default function App() {
     () => [
       { label: 'Global speak hotkey', value: `${hotkeyStatus.accelerator} · ${hotkeyStatus.registered ? 'active' : 'inactive'}` },
       { label: 'Global translate hotkey', value: `${hotkeyStatus.translateAccelerator} · ${hotkeyStatus.registered ? 'active' : 'inactive'}` },
+      { label: 'Assistant activate hotkey', value: `${hotkeyStatus.activateAccelerator} · ${hotkeyStatus.registered ? 'active' : 'inactive'}` },
+      { label: 'Assistant deactivate hotkey', value: `${hotkeyStatus.deactivateAccelerator} · ${hotkeyStatus.registered ? 'active' : 'inactive'}` },
+      { label: 'Assistant name', value: settings.assistantName },
+      { label: 'Assistant state', value: assistantActive ? 'active' : 'inactive' },
       { label: 'Speech mode', value: settings.ttsMode },
       { label: 'Speech defaults', value: `${settings.ttsFormat.toUpperCase()} · ${settings.firstChunkLeadingSilenceMs} ms lead-in · ${settings.playbackSpeed.toFixed(1)}x` },
       { label: 'Translation target', value: settings.translationTargetLanguage },
@@ -504,7 +575,17 @@ export default function App() {
       { label: 'Live transcription', value: isLiveTranscribing ? 'running' : 'stopped' },
       { label: 'Current status', value: appStatus },
     ],
-    [appStatus, hotkeyStatus.accelerator, hotkeyStatus.registered, hotkeyStatus.translateAccelerator, isLiveTranscribing, settings],
+    [
+      appStatus,
+      assistantActive,
+      hotkeyStatus.accelerator,
+      hotkeyStatus.activateAccelerator,
+      hotkeyStatus.deactivateAccelerator,
+      hotkeyStatus.registered,
+      hotkeyStatus.translateAccelerator,
+      isLiveTranscribing,
+      settings,
+    ],
   );
 
   return (
@@ -544,6 +625,22 @@ export default function App() {
               onClick={() => void (isLiveTranscribing ? stopLiveTranscription() : startLiveTranscription())}
             >
               {isLiveTranscribing ? 'Stop live transcription' : 'Start live transcription'}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isSavingSettings || !isLiveTranscribing || assistantActive}
+              onClick={() => liveSttControllerRef.current?.manualActivate('manual')}
+            >
+              Activate assistant
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isSavingSettings || !isLiveTranscribing || !assistantActive}
+              onClick={() => liveSttControllerRef.current?.manualDeactivate('manual')}
+            >
+              Deactivate assistant
             </button>
           </div>
         </section>
@@ -667,18 +764,29 @@ export default function App() {
             <label className="settings-field">
               <span className="info-label">STT provider</span>
               <input type="text" value="WebView2 / Windows speech" readOnly />
-              <span className="field-note">The live transcription path is now simplified to WebView2 only to keep local overhead and lag as low as possible.</span>
+              <span className="field-note">The live transcription path stays on WebView2 only to keep local overhead and lag as low as possible.</span>
             </label>
 
             <label className="settings-field">
-              <span className="info-label">STT language hint</span>
+              <span className="info-label">Assistant name</span>
+              <input
+                type="text"
+                placeholder="AIVA"
+                value={settings.assistantName}
+                onChange={(event) => setSettings({ ...settings, assistantName: event.target.value })}
+              />
+              <span className="field-note">Wake and close phrases stay in English: <code>Hey {settings.assistantName || 'AIVA'}</code> activates, <code>Bye {settings.assistantName || 'AIVA'}</code> deactivates.</span>
+            </label>
+
+            <label className="settings-field">
+              <span className="info-label">Active transcription language</span>
               <input
                 type="text"
                 placeholder="de"
                 value={settings.sttLanguage}
                 onChange={(event) => setSettings({ ...settings, sttLanguage: event.target.value })}
               />
-              <span className="field-note">Language hint for WebView2 speech recognition, e.g. `de` or `en`.</span>
+              <span className="field-note">While inactive, WebView2 listens in English for the wake phrase. After activation it switches to this language for normal transcription, e.g. <code>de</code> or <code>en</code>.</span>
             </label>
 
             <label className="settings-field settings-field--wide">
@@ -701,8 +809,18 @@ export default function App() {
             <strong>{liveTranscriptionStatus}</strong>
           </div>
           <div className="result-block">
+            <span className="info-label">Assistant state</span>
+            <p>{assistantActive ? 'Assistant is active.' : 'Assistant is inactive and listening for the wake phrase.'}</p>
+            <span className="field-note">{assistantStateDetail}</span>
+          </div>
+          <div className="result-block">
+            <span className="info-label">Wake / close phrases</span>
+            <p><strong>{assistantWakePhrase}</strong> · <strong>{assistantClosePhrase}</strong></p>
+            <span className="field-note">Wake and close word detection stays in English. Normal speech is only treated as active transcription after activation.</span>
+          </div>
+          <div className="result-block">
             <span className="info-label">Active transcript</span>
-            <p>{liveTranscript || 'No transcript yet.'}</p>
+            <p>{liveTranscript || (assistantActive ? 'No transcript yet.' : 'Waiting for wake phrase...')}</p>
           </div>
           {Object.values(sttProviderSnapshots).length ? (
             <div className="result-block">
@@ -711,7 +829,7 @@ export default function App() {
                 {Object.values(sttProviderSnapshots).filter((snapshot): snapshot is ProviderSnapshot => Boolean(snapshot)).map((snapshot) => (
                   <article className="stt-provider-card" key={snapshot.provider}>
                     <strong>{snapshot.provider}</strong>
-                    <p>{snapshot.transcript || 'No transcript yet.'}</p>
+                    <p>{snapshot.transcript || 'No transcript payload for this event.'}</p>
                     <span className="field-note">
                       {snapshot.ok ? `ok · ${snapshot.latencyMs} ms` : 'error'}
                       {snapshot.detail ? ` · ${snapshot.detail}` : ''}
@@ -795,10 +913,11 @@ export default function App() {
           <span className="info-label">Usage</span>
           <ol>
             <li>Keep the app running in the background.</li>
-            <li>Use <strong>Start live transcription</strong> to begin continuous microphone transcription with WebView2 speech recognition.</li>
+            <li>Use <strong>Start live transcription</strong> to begin continuous WebView2 listening.</li>
+            <li>Say <strong>{assistantWakePhrase}</strong> to activate the assistant, then speak in the configured active transcription language.</li>
+            <li>Say <strong>{assistantClosePhrase}</strong> to deactivate again, or use <strong>{hotkeyStatus.activateAccelerator}</strong> / <strong>{hotkeyStatus.deactivateAccelerator}</strong> to force activation or deactivation.</li>
             <li>Select text in another Windows app when you want to test the existing TTS flows.</li>
             <li><strong>{hotkeyStatus.accelerator}</strong> reads it aloud, while <strong>{hotkeyStatus.translateAccelerator}</strong> translates it and speaks the translation.</li>
-            <li>The live transcription status card and STT debug log help you see what WebView2 recognized and whether the runtime stayed stable.</li>
           </ol>
         </section>
       </main>

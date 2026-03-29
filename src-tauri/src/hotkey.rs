@@ -11,7 +11,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const DEFAULT_PAUSE_RESUME_HOTKEY: &str = "Ctrl+Shift+P";
 pub const DEFAULT_CANCEL_HOTKEY: &str = "Ctrl+Shift+X";
+pub const DEFAULT_ACTIVATE_ASSISTANT_HOTKEY: &str = "Ctrl+Shift+A";
+pub const DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY: &str = "Ctrl+Shift+D";
 pub const HOTKEY_STATUS_EVENT: &str = "hotkey-status";
+pub const LIVE_STT_CONTROL_EVENT: &str = "live-stt-control";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +24,8 @@ pub struct HotkeyStatusPayload {
     pub translate_accelerator: &'static str,
     pub pause_resume_accelerator: &'static str,
     pub cancel_accelerator: &'static str,
+    pub activate_accelerator: &'static str,
+    pub deactivate_accelerator: &'static str,
     pub platform: &'static str,
     pub state: &'static str,
     pub message: String,
@@ -93,6 +98,13 @@ pub struct HotkeyState {
     snapshot: Mutex<HotkeySnapshot>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveSttControlPayload {
+    pub action: &'static str,
+    pub source: &'static str,
+}
+
 impl Default for HotkeyState {
     fn default() -> Self {
         Self {
@@ -100,7 +112,7 @@ impl Default for HotkeyState {
                 registered: false,
                 state: "idle",
                 message: format!(
-                    "Global hotkeys {DEFAULT_SPEAK_HOTKEY}, {DEFAULT_TRANSLATE_HOTKEY}, {DEFAULT_PAUSE_RESUME_HOTKEY}, and {DEFAULT_CANCEL_HOTKEY} are not registered yet."
+                    "Global hotkeys {DEFAULT_SPEAK_HOTKEY}, {DEFAULT_TRANSLATE_HOTKEY}, {DEFAULT_PAUSE_RESUME_HOTKEY}, {DEFAULT_CANCEL_HOTKEY}, {DEFAULT_ACTIVATE_ASSISTANT_HOTKEY}, and {DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY} are not registered yet."
                 ),
                 ..Default::default()
             }),
@@ -117,6 +129,8 @@ impl HotkeyState {
             translate_accelerator: DEFAULT_TRANSLATE_HOTKEY,
             pause_resume_accelerator: DEFAULT_PAUSE_RESUME_HOTKEY,
             cancel_accelerator: DEFAULT_CANCEL_HOTKEY,
+            activate_accelerator: DEFAULT_ACTIVATE_ASSISTANT_HOTKEY,
+            deactivate_accelerator: DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY,
             platform: if cfg!(target_os = "windows") { "windows" } else { "unsupported" },
             state: snapshot.state,
             message: snapshot.message.clone(),
@@ -334,8 +348,8 @@ mod windows_impl {
         Foundation::HWND,
         UI::{
             Input::KeyboardAndMouse::{
-                RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_P,
-                VK_SPACE, VK_T, VK_X,
+                RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_A, VK_D,
+                VK_P, VK_SPACE, VK_T, VK_X,
             },
             WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY},
         },
@@ -345,6 +359,8 @@ mod windows_impl {
     const TRANSLATE_HOTKEY_ID: i32 = 0x564f54;
     const PAUSE_RESUME_HOTKEY_ID: i32 = 0x564f50;
     const CANCEL_HOTKEY_ID: i32 = 0x564f58;
+    const ACTIVATE_ASSISTANT_HOTKEY_ID: i32 = 0x564f61;
+    const DEACTIVATE_ASSISTANT_HOTKEY_ID: i32 = 0x564f62;
 
     pub fn init_hotkeys(app: &AppHandle) {
         let app_handle = app.clone();
@@ -352,7 +368,7 @@ mod windows_impl {
         state.update(&app_handle, |snapshot| {
             snapshot.state = "registering";
             snapshot.message = format!(
-                "Registering global hotkeys {DEFAULT_SPEAK_HOTKEY}, {DEFAULT_TRANSLATE_HOTKEY}, {DEFAULT_PAUSE_RESUME_HOTKEY}, and {DEFAULT_CANCEL_HOTKEY} …"
+                "Registering global hotkeys {DEFAULT_SPEAK_HOTKEY}, {DEFAULT_TRANSLATE_HOTKEY}, {DEFAULT_PAUSE_RESUME_HOTKEY}, {DEFAULT_CANCEL_HOTKEY}, {DEFAULT_ACTIVATE_ASSISTANT_HOTKEY}, and {DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY} …"
             );
         });
 
@@ -363,6 +379,8 @@ mod windows_impl {
                 (TRANSLATE_HOTKEY_ID, VK_T.0 as u32, DEFAULT_TRANSLATE_HOTKEY),
                 (PAUSE_RESUME_HOTKEY_ID, VK_P.0 as u32, DEFAULT_PAUSE_RESUME_HOTKEY),
                 (CANCEL_HOTKEY_ID, VK_X.0 as u32, DEFAULT_CANCEL_HOTKEY),
+                (ACTIVATE_ASSISTANT_HOTKEY_ID, VK_A.0 as u32, DEFAULT_ACTIVATE_ASSISTANT_HOTKEY),
+                (DEACTIVATE_ASSISTANT_HOTKEY_ID, VK_D.0 as u32, DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY),
             ] {
                 if let Err(error) = RegisterHotKey(HWND(std::ptr::null_mut()), id, modifiers, key) {
                     let state = app_handle.state::<HotkeyState>();
@@ -380,7 +398,7 @@ mod windows_impl {
                 snapshot.registered = true;
                 snapshot.state = "idle";
                 snapshot.message = format!(
-                    "Global hotkeys ready: {DEFAULT_SPEAK_HOTKEY} speaks, {DEFAULT_TRANSLATE_HOTKEY} translates, {DEFAULT_PAUSE_RESUME_HOTKEY} pauses/resumes, {DEFAULT_CANCEL_HOTKEY} cancels the current run."
+                    "Global hotkeys ready: {DEFAULT_SPEAK_HOTKEY} speaks, {DEFAULT_TRANSLATE_HOTKEY} translates, {DEFAULT_PAUSE_RESUME_HOTKEY} pauses/resumes, {DEFAULT_CANCEL_HOTKEY} cancels the current run, {DEFAULT_ACTIVATE_ASSISTANT_HOTKEY} activates the live assistant, and {DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY} deactivates it."
                 );
             });
 
@@ -397,13 +415,22 @@ mod windows_impl {
                         TRANSLATE_HOTKEY_ID => trigger_capture_and_translate(&app_handle),
                         PAUSE_RESUME_HOTKEY_ID => trigger_pause_resume(&app_handle),
                         CANCEL_HOTKEY_ID => trigger_cancel(&app_handle),
+                        ACTIVATE_ASSISTANT_HOTKEY_ID => trigger_live_stt_control(&app_handle, "activate"),
+                        DEACTIVATE_ASSISTANT_HOTKEY_ID => trigger_live_stt_control(&app_handle, "deactivate"),
                         _ => {}
                     }
                     thread::sleep(Duration::from_millis(50));
                 }
             }
 
-            for id in [SPEAK_HOTKEY_ID, TRANSLATE_HOTKEY_ID, PAUSE_RESUME_HOTKEY_ID, CANCEL_HOTKEY_ID] {
+            for id in [
+                SPEAK_HOTKEY_ID,
+                TRANSLATE_HOTKEY_ID,
+                PAUSE_RESUME_HOTKEY_ID,
+                CANCEL_HOTKEY_ID,
+                ACTIVATE_ASSISTANT_HOTKEY_ID,
+                DEACTIVATE_ASSISTANT_HOTKEY_ID,
+            ] {
                 let _ = UnregisterHotKey(HWND(std::ptr::null_mut()), id);
             }
         });
@@ -500,6 +527,29 @@ mod windows_impl {
                     format_chunk_suffix(active.chunk_index, active.chunk_total)
                 );
             }
+        });
+    }
+
+    fn trigger_live_stt_control(app: &AppHandle, action: &'static str) {
+        let detail = if action == "activate" {
+            "Requested live assistant activation via global hotkey."
+        } else {
+            "Requested live assistant deactivation via global hotkey."
+        };
+
+        let _ = app.emit(
+            LIVE_STT_CONTROL_EVENT,
+            LiveSttControlPayload {
+                action,
+                source: "hotkey",
+            },
+        );
+
+        let state = app.state::<HotkeyState>();
+        state.update(app, |snapshot| {
+            snapshot.state = "idle";
+            snapshot.last_action = Some(format!("live-stt-{action}"));
+            snapshot.message = detail.to_string();
         });
     }
 
