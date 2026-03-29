@@ -5,7 +5,7 @@ type CueKind = 'wake' | 'close';
 type CueWord = 'hey' | 'bye';
 
 export const DEFAULT_ASSISTANT_WAKE_THRESHOLD = 68;
-export const DEFAULT_ASSISTANT_CLOSE_THRESHOLD = 72;
+export const DEFAULT_ASSISTANT_CLOSE_THRESHOLD = 64;
 export const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS = 1200;
 export const ASSISTANT_MATCH_THRESHOLD_MIN = 45;
 export const ASSISTANT_MATCH_THRESHOLD_MAX = 95;

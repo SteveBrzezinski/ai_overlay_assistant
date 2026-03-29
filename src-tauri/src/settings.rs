@@ -13,7 +13,7 @@ pub const SETTINGS_EVENT: &str = "settings-updated";
 pub const CONFIG_FILE_NAME: &str = ".voice-overlay-assistant.config.json";
 const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
 const DEFAULT_ASSISTANT_WAKE_THRESHOLD: u8 = 68;
-const DEFAULT_ASSISTANT_CLOSE_THRESHOLD: u8 = 72;
+const DEFAULT_ASSISTANT_CLOSE_THRESHOLD: u8 = 64;
 const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS: u32 = 1200;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
