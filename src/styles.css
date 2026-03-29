@@ -160,6 +160,10 @@ h1 {
   opacity: 0.55;
 }
 
+.secondary-button--icon {
+  min-width: 110px;
+}
+
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -241,6 +245,18 @@ h1 {
   font-size: 0.92rem;
 }
 
+.field-note--error {
+  color: #ff9e9e;
+}
+
+.field-note--warning {
+  color: #ffd391;
+}
+
+.field-note--success {
+  color: #96edc2;
+}
+
 .settings-warning {
   display: grid;
   gap: 8px;
@@ -270,6 +286,13 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.inline-field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
 }
 
 .checkbox-row {
@@ -364,6 +387,24 @@ h1 {
 .modal-card p {
   margin: 0;
   color: #c8d4ee;
+}
+
+.modal-card--wide {
+  width: min(700px, 100%);
+}
+
+.training-phrase-box {
+  margin: 16px 0;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(160, 186, 255, 0.18);
+  background: rgba(10, 16, 31, 0.72);
+  text-align: center;
+}
+
+.training-phrase-box strong {
+  font-size: 1.2rem;
+  color: #f4f8ff;
 }
 
 .modal-actions {

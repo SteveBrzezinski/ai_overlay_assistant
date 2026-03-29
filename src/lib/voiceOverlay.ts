@@ -32,6 +32,14 @@ export type AppSettings = {
   playbackSpeed: number;
   openaiApiKey: string;
   sttLanguage: string;
+  assistantName: string;
+  assistantWakeSamples: string[];
+  assistantCloseSamples: string[];
+  assistantNameSamples: string[];
+  assistantSampleLanguage: string;
+  assistantWakeThreshold: number;
+  assistantCloseThreshold: number;
+  assistantCueCooldownMs: number;
 };
 
 export type LanguageOption = {
@@ -115,6 +123,8 @@ export type HotkeyStatus = {
   translateAccelerator: string;
   pauseResumeAccelerator: string;
   cancelAccelerator: string;
+  activateAccelerator: string;
+  deactivateAccelerator: string;
   platform: 'windows' | 'unsupported';
   state: 'idle' | 'registering' | 'working' | 'success' | 'error' | 'unsupported';
   message: string;
@@ -148,7 +158,13 @@ export type HotkeyStatus = {
   lastSttActiveTranscript?: string | null;
 };
 
+export type LiveSttControlEvent = {
+  action: 'activate' | 'deactivate';
+  source: string;
+};
+
 const HOTKEY_STATUS_EVENT = 'hotkey-status';
+const LIVE_STT_CONTROL_EVENT = 'live-stt-control';
 
 export async function getAppStatus(): Promise<string> {
   return invoke<string>('app_status');
@@ -176,6 +192,10 @@ export async function getLanguageOptions(): Promise<LanguageOption[]> {
 
 export async function onHotkeyStatus(callback: (status: HotkeyStatus) => void): Promise<UnlistenFn> {
   return listen<HotkeyStatus>(HOTKEY_STATUS_EVENT, (event) => callback(event.payload));
+}
+
+export async function onLiveSttControl(callback: (event: LiveSttControlEvent) => void): Promise<UnlistenFn> {
+  return listen<LiveSttControlEvent>(LIVE_STT_CONTROL_EVENT, (event) => callback(event.payload));
 }
 
 export async function captureAndSpeak(
