@@ -258,5 +258,5 @@ npm run build
 npx tsc --noEmit
 cargo check
 ```
-
+test
 > Rust/Tauri-Windows-Teile lassen sich am sinnvollsten auf einem echten Windows-Setup validieren.
