@@ -1,10 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use voice_overlay_assistant::{hotkey, run_controller, settings};
+use tauri::Manager;
+use voice_overlay_assistant::{background, hotkey, run_controller, settings};
 
 #[tauri::command]
 fn app_status() -> &'static str {
-    "Voice Overlay Assistant is ready: global hotkeys can capture selected text for TTS or translation, and the UI can run continuous microphone transcription with WebView2 speech recognition."
+    "Voice Overlay Assistant is ready: global hotkeys keep running in the background, the tray can reopen the UI, and the settings can manage Windows autostart for hidden startup."
 }
 
 fn main() {
@@ -12,13 +13,19 @@ fn main() {
         .expect("failed to initialize persisted settings");
 
     tauri::Builder::default()
+        .manage(background::AppLifecycleState::default())
         .manage(hotkey::HotkeyState::default())
         .manage(run_controller::RunController::default())
         .manage(settings_state)
         .setup(|app| {
+            background::setup_background(&app.handle())
+                .expect("failed to initialize background tray support");
             hotkey::init_hotkey(&app.handle());
+            let settings = app.state::<settings::SettingsState>().get();
+            background::apply_launch_behavior(&app.handle(), &settings);
             Ok(())
         })
+        .on_window_event(background::handle_window_event)
         .invoke_handler(tauri::generate_handler![
             app_status,
             hotkey::get_hotkey_status,

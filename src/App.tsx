@@ -73,6 +73,8 @@ const fallbackHotkeyStatus: HotkeyStatus = {
 const fallbackSettings: AppSettings = {
   ttsMode: 'classic',
   realtimeAllowLiveFallback: false,
+  launchAtLogin: false,
+  startHiddenOnLaunch: true,
   ttsFormat: 'wav',
   firstChunkLeadingSilenceMs: 180,
   translationTargetLanguage: 'en',
@@ -1009,6 +1011,28 @@ export default function App() {
                 <span>Allow temporary fallback from realtime to live on startup failure</span>
               </label>
               <span className="field-note">Default is off so real Realtime connect/session.update/response.create/audio errors stay visible. Turn this on only if you explicitly want the old rescue path while debugging.</span>
+            </label>
+
+            <label className="settings-field settings-field--wide">
+              <span className="info-label">Background startup</span>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={settings.launchAtLogin}
+                  onChange={(event) => setSettings({ ...settings, launchAtLogin: event.target.checked })}
+                />
+                <span>Start Voice Overlay Assistant automatically with Windows</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={settings.startHiddenOnLaunch}
+                  disabled={!settings.launchAtLogin}
+                  onChange={(event) => setSettings({ ...settings, startHiddenOnLaunch: event.target.checked })}
+                />
+                <span>When started automatically, keep the window hidden and run in the background</span>
+              </label>
+              <span className="field-note">Saving this writes or removes a Windows Startup launcher for the current executable. Closing the main window now keeps the assistant alive in the tray so hotkeys and live listening can continue.</span>
             </label>
 
             <label className="settings-field">

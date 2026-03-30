@@ -26,6 +26,8 @@ export type TranslateOptions = {
 export type AppSettings = {
   ttsMode: 'classic' | 'live' | 'realtime';
   realtimeAllowLiveFallback: boolean;
+  launchAtLogin: boolean;
+  startHiddenOnLaunch: boolean;
   ttsFormat: 'wav' | 'mp3';
   firstChunkLeadingSilenceMs: number;
   translationTargetLanguage: string;

@@ -1,3 +1,4 @@
+pub mod background;
 pub mod hotkey;
 pub mod run_controller;
 pub mod selection_capture;

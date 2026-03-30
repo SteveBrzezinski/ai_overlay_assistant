@@ -18,7 +18,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 rodio = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2.0.0", features = [] }
+tauri = { version = "2.0.0", features = ["tray-icon"] }
 tungstenite = { version = "0.24", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

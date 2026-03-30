@@ -1,3 +1,4 @@
+use crate::background;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
@@ -21,6 +22,8 @@ const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS: u32 = 1200;
 pub struct AppSettings {
     pub tts_mode: String,
     pub realtime_allow_live_fallback: bool,
+    pub launch_at_login: bool,
+    pub start_hidden_on_launch: bool,
     pub tts_format: String,
     pub first_chunk_leading_silence_ms: u32,
     pub translation_target_language: String,
@@ -42,6 +45,8 @@ impl Default for AppSettings {
         Self {
             tts_mode: "classic".to_string(),
             realtime_allow_live_fallback: false,
+            launch_at_login: false,
+            start_hidden_on_launch: true,
             tts_format: "wav".to_string(),
             first_chunk_leading_silence_ms: 180,
             translation_target_language: "en".to_string(),
@@ -108,6 +113,7 @@ impl SettingsState {
         };
 
         write_settings_file(&config_path, &loaded)?;
+        background::sync_startup_entry(&loaded)?;
 
         Ok(Self {
             settings: Mutex::new(loaded),
@@ -119,8 +125,13 @@ impl SettingsState {
     }
 
     pub fn update(&self, next: AppSettings) -> Result<AppSettings, String> {
+        let previous = self.get();
         let next = sanitize_settings(next);
-        write_settings_file(&self.config_path, &next)?;
+        background::sync_startup_entry(&next)?;
+        if let Err(error) = write_settings_file(&self.config_path, &next) {
+            let _ = background::sync_startup_entry(&previous);
+            return Err(error);
+        }
 
         let mut guard = self.settings.lock().expect("settings poisoned");
         *guard = next;
@@ -142,7 +153,6 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         "realtime" | "realtime_experimental" | "realtime-experimental" => "realtime".to_string(),
         _ => "classic".to_string(),
     };
-
     settings.tts_format = match settings.tts_format.trim().to_lowercase().as_str() {
         "mp3" => "mp3".to_string(),
         _ => "wav".to_string(),
