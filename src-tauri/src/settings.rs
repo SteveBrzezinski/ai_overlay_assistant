@@ -12,6 +12,9 @@ pub const DEFAULT_CANCEL_HOTKEY: &str = "Ctrl+Shift+X";
 pub const SETTINGS_EVENT: &str = "settings-updated";
 pub const CONFIG_FILE_NAME: &str = ".voice-overlay-assistant.config.json";
 const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
+const DEFAULT_ASSISTANT_WAKE_THRESHOLD: u8 = 68;
+const DEFAULT_ASSISTANT_CLOSE_THRESHOLD: u8 = 64;
+const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS: u32 = 1200;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -23,6 +26,15 @@ pub struct AppSettings {
     pub translation_target_language: String,
     pub playback_speed: f32,
     pub openai_api_key: String,
+    pub stt_language: String,
+    pub assistant_name: String,
+    pub assistant_wake_samples: Vec<String>,
+    pub assistant_close_samples: Vec<String>,
+    pub assistant_name_samples: Vec<String>,
+    pub assistant_sample_language: String,
+    pub assistant_wake_threshold: u8,
+    pub assistant_close_threshold: u8,
+    pub assistant_cue_cooldown_ms: u32,
 }
 
 impl Default for AppSettings {
@@ -35,6 +47,15 @@ impl Default for AppSettings {
             translation_target_language: "en".to_string(),
             playback_speed: DEFAULT_PLAYBACK_SPEED,
             openai_api_key: String::new(),
+            stt_language: "de".to_string(),
+            assistant_name: "AIVA".to_string(),
+            assistant_wake_samples: Vec::new(),
+            assistant_close_samples: Vec::new(),
+            assistant_name_samples: Vec::new(),
+            assistant_sample_language: "de".to_string(),
+            assistant_wake_threshold: DEFAULT_ASSISTANT_WAKE_THRESHOLD,
+            assistant_close_threshold: DEFAULT_ASSISTANT_CLOSE_THRESHOLD,
+            assistant_cue_cooldown_ms: DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
         }
     }
 }
@@ -138,6 +159,27 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
 
     settings.playback_speed = sanitize_playback_speed(settings.playback_speed);
     settings.openai_api_key = settings.openai_api_key.trim().to_string();
+    settings.stt_language = if settings.stt_language.trim().is_empty() {
+        "de".to_string()
+    } else {
+        settings.stt_language.trim().to_lowercase()
+    };
+    settings.assistant_name = if settings.assistant_name.trim().is_empty() {
+        "AIVA".to_string()
+    } else {
+        settings.assistant_name.trim().to_string()
+    };
+    settings.assistant_sample_language = if settings.assistant_sample_language.trim().is_empty() {
+        settings.stt_language.clone()
+    } else {
+        settings.assistant_sample_language.trim().to_lowercase()
+    };
+    settings.assistant_wake_samples = sanitize_phrase_samples(settings.assistant_wake_samples, 4);
+    settings.assistant_close_samples = sanitize_phrase_samples(settings.assistant_close_samples, 4);
+    settings.assistant_name_samples = sanitize_phrase_samples(settings.assistant_name_samples, 2);
+    settings.assistant_wake_threshold = sanitize_assistant_threshold(settings.assistant_wake_threshold);
+    settings.assistant_close_threshold = sanitize_assistant_threshold(settings.assistant_close_threshold);
+    settings.assistant_cue_cooldown_ms = sanitize_assistant_cooldown_ms(settings.assistant_cue_cooldown_ms);
 
     settings
 }
@@ -183,12 +225,29 @@ fn write_settings_file(path: &Path, settings: &AppSettings) -> Result<(), String
         .map_err(|error| format!("Failed to write config file '{}': {error}", path.display()))
 }
 
+fn sanitize_phrase_samples(samples: Vec<String>, max_len: usize) -> Vec<String> {
+    samples
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .take(max_len)
+        .collect()
+}
+
 fn sanitize_playback_speed(value: f32) -> f32 {
     if !value.is_finite() {
         return DEFAULT_PLAYBACK_SPEED;
     }
 
     ((value * 10.0).round() / 10.0).clamp(0.5, 2.0)
+}
+
+fn sanitize_assistant_threshold(value: u8) -> u8 {
+    value.clamp(45, 95)
+}
+
+fn sanitize_assistant_cooldown_ms(value: u32) -> u32 {
+    value.clamp(0, 5_000)
 }
 
 fn load_env_file_if_present() {
