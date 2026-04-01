@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use voice_overlay_assistant::{hotkey, run_controller, settings};
+use voice_overlay_assistant::{hotkey, run_controller, settings, voice_tasks};
 
 #[tauri::command]
 fn app_status() -> &'static str {
-    "Voice Overlay Assistant is ready: global hotkeys can capture selected text for TTS or translation, and the UI can run continuous microphone transcription with WebView2 speech recognition."
+    "Voice Overlay Assistant is ready: WebView2 handles wake-word listening, read/translate uses live TTS, and the voice assistant uses OpenAI Realtime over WebRTC."
 }
 
 fn main() {
@@ -15,6 +15,7 @@ fn main() {
         .manage(hotkey::HotkeyState::default())
         .manage(run_controller::RunController::default())
         .manage(settings_state)
+        .manage(voice_tasks::VoiceTaskState::default())
         .setup(|app| {
             hotkey::init_hotkey(&app.handle());
             Ok(())
@@ -33,7 +34,10 @@ fn main() {
             voice_overlay_assistant::get_language_options,
             voice_overlay_assistant::append_stt_debug_log_command,
             voice_overlay_assistant::pause_resume_current_run,
-            voice_overlay_assistant::cancel_current_run
+            voice_overlay_assistant::cancel_current_run,
+            voice_overlay_assistant::create_voice_agent_session_command,
+            voice_overlay_assistant::run_voice_agent_tool_command,
+            voice_overlay_assistant::get_voice_agent_task_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

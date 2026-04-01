@@ -5,6 +5,10 @@ pub mod settings;
 pub mod stt;
 pub mod translation;
 pub mod tts;
+pub mod voice_agent;
+pub mod voice_profile;
+pub mod voice_tasks;
+pub mod voice_tools;
 
 mod commands {
     use super::run_controller::{CancelResult, PauseResumeResult, RunController};
@@ -120,12 +124,12 @@ mod commands {
                 text: Some(capture.text.clone()),
                 voice: base_speak.voice,
                 model: base_speak.model,
-                format: base_speak.format,
-                mode: base_speak.mode.or(Some(app_settings.tts_mode.clone())),
+                format: Some("wav".to_string()),
+                mode: Some("live".to_string()),
                 autoplay: base_speak.autoplay,
                 max_chunk_chars: base_speak.max_chunk_chars,
                 max_parallel_requests: base_speak.max_parallel_requests,
-                first_chunk_leading_silence_ms: base_speak.first_chunk_leading_silence_ms,
+                first_chunk_leading_silence_ms: Some(0),
             },
             &app_settings,
         )?;
@@ -160,12 +164,12 @@ mod commands {
                 text: Some(translation.text.clone()),
                 voice: None,
                 model: None,
-                format: Some(app_settings.tts_format.clone()),
-                mode: Some(app_settings.tts_mode.clone()),
+                format: Some("wav".to_string()),
+                mode: Some("live".to_string()),
                 autoplay: Some(true),
                 max_chunk_chars: None,
                 max_parallel_requests: Some(3),
-                first_chunk_leading_silence_ms: Some(app_settings.first_chunk_leading_silence_ms),
+                first_chunk_leading_silence_ms: Some(0),
             },
             &app_settings,
         )?;
@@ -174,3 +178,5 @@ mod commands {
 }
 
 pub use commands::{append_stt_debug_log_command, cancel_current_run, capture_and_speak_command, capture_and_translate_command, capture_selected_text_command, get_language_options, get_settings, pause_resume_current_run, reset_settings, speak_text_command, translate_text_command, update_settings};
+pub use voice_agent::{create_voice_agent_session_command, run_voice_agent_tool_command};
+pub use voice_tasks::get_voice_agent_task_command;

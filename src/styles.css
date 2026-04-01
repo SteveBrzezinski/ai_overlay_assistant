@@ -171,6 +171,82 @@ h1 {
   margin-top: 22px;
 }
 
+.feed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.feed-card {
+  background: rgba(12, 19, 39, 0.82);
+  border: 1px solid rgba(122, 162, 255, 0.14);
+  border-radius: 20px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+  padding: 24px;
+}
+
+.feed-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.feed-list {
+  display: grid;
+  gap: 12px;
+  max-height: 520px;
+  margin-top: 18px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.feed-item {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(160, 186, 255, 0.14);
+  background: rgba(10, 16, 31, 0.72);
+}
+
+.feed-item--client {
+  border-color: rgba(122, 162, 255, 0.28);
+}
+
+.feed-item--server {
+  border-color: rgba(104, 240, 185, 0.18);
+}
+
+.feed-item--task {
+  border-color: rgba(255, 214, 112, 0.24);
+}
+
+.feed-item--error {
+  border-color: rgba(255, 108, 108, 0.32);
+}
+
+.feed-item strong,
+.feed-item small {
+  color: #edf4ff;
+}
+
+.feed-item pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #c8d4ee;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.9rem;
+}
+
+.feed-empty {
+  margin: 0;
+  color: #9fb1d9;
+}
+
 .info-card {
   padding: 20px;
 }

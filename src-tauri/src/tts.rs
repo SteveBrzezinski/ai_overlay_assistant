@@ -32,7 +32,7 @@ const DEFAULT_MODEL: &str = "gpt-4o-mini-tts";
 const DEFAULT_REALTIME_MODEL: &str = "gpt-realtime-1.5";
 const DEFAULT_VOICE: &str = "alloy";
 const DEFAULT_FORMAT: &str = "wav";
-const DEFAULT_TTS_MODE: &str = "classic";
+const DEFAULT_TTS_MODE: &str = "live";
 const DEFAULT_MAX_CHUNK_CHARS: usize = 280;
 const DEFAULT_MAX_PARALLEL_REQUESTS: usize = 3;
 const MAX_PARALLEL_REQUESTS_LIMIT: usize = 4;
@@ -222,6 +222,7 @@ impl SpeechSessionPlan {
         self.resolved_mode.as_str()
     }
 
+    #[cfg(test)]
     fn fallback_to_live(&self, reason: impl Into<String>) -> Self {
         Self {
             session_id: self.session_id.clone(),
@@ -1245,6 +1246,7 @@ fn default_model_for_mode(mode: TtsMode) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn resolve_fallback_live_model(explicit_model: Option<&str>) -> String {
     match explicit_model.map(str::trim).filter(|value| !value.is_empty()) {
         Some(value) if value.contains("realtime") => DEFAULT_MODEL.to_string(),
@@ -2924,10 +2926,11 @@ pub fn speak_text_with_progress_and_control(
     }
 
     let api_key = resolve_openai_api_key(settings)?;
-    let requested_mode = resolve_tts_mode(options.mode.or_else(|| Some(settings.tts_mode.clone())));
+    let requested_mode =
+        resolve_tts_mode(options.mode.or_else(|| Some(DEFAULT_TTS_MODE.to_string())));
     let session_plan = build_session_plan(requested_mode);
     let requested_format =
-        resolve_format(options.format.or_else(|| Some(settings.tts_format.clone())))?;
+        resolve_format(options.format.or_else(|| Some(DEFAULT_FORMAT.to_string())))?;
     let explicit_model = options.model;
     let voice = options.voice.unwrap_or_else(|| DEFAULT_VOICE.to_string());
     let autoplay = options.autoplay.unwrap_or(true);
@@ -2935,7 +2938,7 @@ pub fn speak_text_with_progress_and_control(
     let max_parallel_requests = resolve_parallel_requests(options.max_parallel_requests);
     let first_chunk_leading_silence_ms = options
         .first_chunk_leading_silence_ms
-        .unwrap_or(settings.first_chunk_leading_silence_ms);
+        .unwrap_or(0);
     let playback_speed = settings.playback_speed;
 
     let build_resolved = |mode: TtsMode, model: String, format: String, transport_format: String| {
@@ -2997,27 +3000,6 @@ pub fn speak_text_with_progress_and_control(
                 run_access.clone(),
             ) {
                 Ok(result) => Ok(result),
-                Err(error) if error.can_fallback_to_live && settings.realtime_allow_live_fallback => {
-                    let reason = format!(
-                        "Experimental realtime websocket startup failed and the app fell back to live streaming: {}",
-                        error.message
-                    );
-                    if let Some(progress_cb) = &progress {
-                        progress_cb(TtsProgress::FallbackToLive {
-                            reason: reason.clone(),
-                        });
-                    }
-
-                    let fallback_plan = session_plan.fallback_to_live(reason);
-                    let fallback_resolved = build_resolved(
-                        TtsMode::Live,
-                        resolve_fallback_live_model(explicit_model.as_deref()),
-                        "wav".to_string(),
-                        LIVE_TRANSPORT_FORMAT.to_string(),
-                    );
-                    let live_pipeline = LiveSpeechPipeline::new(api_key)?;
-                    live_pipeline.run(&text, fallback_resolved, &fallback_plan, progress, run_access)
-                }
                 Err(error) if error.can_fallback_to_live => Err(error.message),
                 Err(error) => Err(error.message),
             }
