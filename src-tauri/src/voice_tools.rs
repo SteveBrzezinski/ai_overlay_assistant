@@ -917,19 +917,31 @@ fn get_openclaw_status_tool() -> Result<Value, String> {
             "installed": false,
             "availableMode": "none",
             "gatewayAvailable": false,
+            "gatewayServiceAvailable": false,
+            "gatewayRpcAvailable": false,
         }));
     }
 
     let command_path = command_check.stdout.trim().to_string();
-    let health = run_powershell_output("openclaw health --json")?;
-    if health.success {
-        let payload = extract_json_value(&format!("{}\n{}", health.stdout, health.stderr))?;
+    if let Some(payload) = inspect_openclaw_gateway_status()? {
+        let gateway_rpc_available = payload
+            .get("rpc")
+            .and_then(Value::as_object)
+            .and_then(|rpc| rpc.get("ok"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let gateway_service_available = payload
+            .get("serviceReachable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         Ok(json!({
             "installed": true,
             "commandPath": command_path,
-            "availableMode": "gateway",
-            "gatewayAvailable": true,
-            "health": payload,
+            "availableMode": if gateway_rpc_available { "gateway" } else { "local" },
+            "gatewayAvailable": gateway_rpc_available,
+            "gatewayServiceAvailable": gateway_service_available,
+            "gatewayRpcAvailable": gateway_rpc_available,
+            "gatewayStatus": payload,
         }))
     } else {
         Ok(json!({
@@ -937,7 +949,9 @@ fn get_openclaw_status_tool() -> Result<Value, String> {
             "commandPath": command_path,
             "availableMode": "local",
             "gatewayAvailable": false,
-            "healthError": combined_output(&health),
+            "gatewayServiceAvailable": false,
+            "gatewayRpcAvailable": false,
+            "gatewayStatus": Value::Null,
         }))
     }
 }
@@ -1834,8 +1848,7 @@ fn run_openclaw_task(
     }
 
     let normalized_prefer_mode = normalize_prefer_mode(prefer_mode);
-    let status = get_openclaw_status_tool()?;
-    if !status.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    if !is_openclaw_installed()? {
         return Ok(json!({
             "ok": false,
             "reason": "openclaw_not_installed",
@@ -1843,12 +1856,24 @@ fn run_openclaw_task(
         }));
     }
 
-    let gateway_available = status.get("gatewayAvailable").and_then(Value::as_bool).unwrap_or(false);
-    let chosen_mode = if normalized_prefer_mode == "auto" {
-        if gateway_available { "gateway" } else { "local" }
+    let gateway_status = if normalized_prefer_mode == "gateway" {
+        probe_openclaw_gateway_status()?
     } else {
-        normalized_prefer_mode
+        None
     };
+    let gateway_available = gateway_status
+        .as_ref()
+        .and_then(|payload| payload.get("rpc"))
+        .and_then(Value::as_object)
+        .and_then(|rpc| rpc.get("ok"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let chosen_mode = if normalized_prefer_mode == "gateway" && gateway_available {
+        "gateway"
+    } else {
+        "local"
+    };
+    let degraded_from_gateway = normalized_prefer_mode == "gateway" && chosen_mode == "local";
 
     let use_local_flag = if chosen_mode == "local" { "--local " } else { "" };
     let script = format!(
@@ -1870,7 +1895,8 @@ fn run_openclaw_task(
             "task": trimmed_task,
             "reason": if timeout_detected { "openclaw_timeout" } else if file_lock_detected { "openclaw_session_locked" } else { "openclaw_task_failed" },
             "message": diagnostics,
-            "status": status,
+            "gatewayStatus": gateway_status,
+            "degradedFromGateway": degraded_from_gateway,
         }));
     }
 
@@ -1889,7 +1915,10 @@ fn run_openclaw_task(
 
     Ok(json!({
         "ok": true,
+        "requestedMode": normalized_prefer_mode,
         "mode": chosen_mode,
+        "degradedFromGateway": degraded_from_gateway,
+        "gatewayStatus": gateway_status,
         "task": trimmed_task,
         "message": message,
         "payload": payload,
@@ -2089,6 +2118,111 @@ fn run_powershell_output(script: &str) -> Result<ShellOutput, String> {
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         success: output.status.success(),
     })
+}
+
+fn is_openclaw_installed() -> Result<bool, String> {
+    let command_check = run_powershell_output("$cmd = Get-Command openclaw -ErrorAction Stop; $cmd.Source")?;
+    Ok(command_check.success)
+}
+
+fn inspect_openclaw_gateway_status() -> Result<Option<Value>, String> {
+    let output = run_powershell_output("openclaw gateway status --json --no-probe")?;
+    if !output.success {
+        return Ok(None);
+    }
+
+    let mut payload = extract_json_value(&format!("{}\n{}", output.stdout, output.stderr))?;
+    enrich_openclaw_gateway_status(&mut payload)?;
+    Ok(Some(payload))
+}
+
+fn probe_openclaw_gateway_status() -> Result<Option<Value>, String> {
+    let output = run_powershell_output("openclaw gateway status --json --timeout 3000")?;
+    if !output.success {
+        return inspect_openclaw_gateway_status();
+    }
+
+    let mut payload = extract_json_value(&format!("{}\n{}", output.stdout, output.stderr))?;
+    enrich_openclaw_gateway_status(&mut payload)?;
+    Ok(Some(payload))
+}
+
+fn enrich_openclaw_gateway_status(payload: &mut Value) -> Result<(), String> {
+    let process_count = get_openclaw_gateway_process_count()?;
+    let dashboard = get_openclaw_gateway_dashboard_status()?;
+    let has_rpc_payload = payload.get("rpc").is_some();
+    let service_loaded = payload
+        .get("service")
+        .and_then(Value::as_object)
+        .and_then(|service| service.get("loaded"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let rpc_available = payload
+        .get("rpc")
+        .and_then(Value::as_object)
+        .and_then(|rpc| rpc.get("ok"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let dashboard_ok = dashboard.get("ok").and_then(Value::as_bool).unwrap_or(false);
+
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("processCount".to_string(), json!(process_count));
+        object.insert("dashboard".to_string(), dashboard);
+        object.insert("serviceLoaded".to_string(), Value::Bool(service_loaded));
+        object.insert("serviceReachable".to_string(), Value::Bool(process_count > 0 && dashboard_ok));
+        object.insert("rpcAvailable".to_string(), Value::Bool(rpc_available));
+        object.insert(
+            "statusMode".to_string(),
+            Value::String(if has_rpc_payload {
+                "service_and_rpc".to_string()
+            } else {
+                "service_only".to_string()
+            }),
+        );
+    }
+
+    Ok(())
+}
+
+fn get_openclaw_gateway_process_count() -> Result<u64, String> {
+    let script = "@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'node_modules\\\\openclaw\\\\dist\\\\(entry|index)\\.js gateway' -or $_.CommandLine -match '\\\\.openclaw\\\\gateway\\.cmd' }).Count";
+    let output = run_powershell_output(script)?;
+    if !output.success {
+        return Err(format!(
+            "Failed to inspect OpenClaw gateway processes: {}",
+            combined_output(&output)
+        ));
+    }
+
+    Ok(output.stdout.trim().parse::<u64>().unwrap_or(0))
+}
+
+fn get_openclaw_gateway_dashboard_status() -> Result<Value, String> {
+    let script = r#"
+try {
+  $response = Invoke-WebRequest -Uri 'http://127.0.0.1:18790/' -UseBasicParsing -TimeoutSec 3
+  @{
+    ok = ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
+    statusCode = [int]$response.StatusCode
+    statusDescription = [string]$response.StatusDescription
+  } | ConvertTo-Json -Compress
+} catch {
+  @{
+    ok = $false
+    statusCode = $null
+    statusDescription = $_.Exception.Message
+  } | ConvertTo-Json -Compress
+}
+"#;
+    let output = run_powershell_output(script)?;
+    if !output.success {
+        return Err(format!(
+            "Failed to inspect the OpenClaw gateway dashboard: {}",
+            combined_output(&output)
+        ));
+    }
+
+    extract_json_value(&format!("{}\n{}", output.stdout, output.stderr))
 }
 
 fn combined_output(output: &ShellOutput) -> String {

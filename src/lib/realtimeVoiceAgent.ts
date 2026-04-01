@@ -10,6 +10,9 @@ import {
 } from './voiceOverlay';
 
 const MAX_MEMORY_ITEMS = 32;
+const FALLBACK_SESSION_DURATION_MS = 60 * 60 * 1000;
+const SESSION_ROTATION_BUFFER_MS = 2 * 60 * 1000;
+const MIN_SESSION_ROTATION_DELAY_MS = 30 * 1000;
 
 export type VoiceFeedSection = 'events' | 'tasks';
 export type VoiceFeedKind = 'client' | 'server' | 'lifecycle' | 'task' | 'error';
@@ -66,13 +69,17 @@ export class RealtimeVoiceAgentController {
   private toolEvents: string[] = [];
   private taskEvents: string[] = [];
   private connectPromise: Promise<void> | null = null;
+  private reconnectPromise: Promise<void> | null = null;
+  private sessionRotationTimer: number | null = null;
+  private sessionExpiresAtMs: number | null = null;
+  private rotateAfterMute = false;
 
   constructor(callbacks: RealtimeVoiceAgentCallbacks) {
     this.callbacks = callbacks;
   }
 
   async connect(): Promise<void> {
-    if (this.state === 'online_muted' || this.state === 'online_listening') {
+    if ((this.state === 'online_muted' || this.state === 'online_listening') && this.isTransportReady()) {
       return;
     }
     if (this.connectPromise) {
@@ -98,6 +105,14 @@ export class RealtimeVoiceAgentController {
         };
         peerConnection.onconnectionstatechange = () => {
           this.log('events', 'lifecycle', 'peer connection', peerConnection.connectionState);
+          if (
+            (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') &&
+            this.state !== 'disconnecting' &&
+            this.state !== 'idle' &&
+            !this.reconnectPromise
+          ) {
+            void this.recoverSession(`peer-${peerConnection.connectionState}`);
+          }
         };
 
         const audioTransceiver = peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
@@ -109,10 +124,14 @@ export class RealtimeVoiceAgentController {
         dataChannel.addEventListener('open', () => {
           this.setStatus('online_muted', 'Realtime voice session connected. Microphone is muted.');
           this.log('events', 'lifecycle', 'session', 'Realtime data channel opened');
+          this.scheduleSessionRotation();
           void this.injectRecentMemoryContext();
         });
         dataChannel.addEventListener('close', () => {
           this.log('events', 'lifecycle', 'session', 'Realtime data channel closed');
+          if (this.state !== 'disconnecting' && this.state !== 'idle' && !this.reconnectPromise) {
+            void this.recoverSession('data-channel-closed');
+          }
         });
 
         this.peerConnection = peerConnection;
@@ -163,9 +182,24 @@ export class RealtimeVoiceAgentController {
   }
 
   async startListening(reason = 'activate'): Promise<void> {
+    if (this.reconnectPromise) {
+      await this.reconnectPromise;
+      if (this.state === 'online_listening') {
+        return;
+      }
+    }
     if (this.state === 'idle' || this.state === 'error' || this.state === 'connecting') {
       await this.connect();
     }
+    if (!this.isTransportReady()) {
+      this.log('events', 'lifecycle', 'session', `Realtime transport was not ready before microphone activation. Recovering session (${reason}).`);
+      await this.recoverSession(`${reason}-recover`, true);
+      return;
+    }
+    await this.attachMicrophone(reason);
+  }
+
+  private async attachMicrophone(reason: string): Promise<void> {
     if (this.state === 'online_listening') {
       return;
     }
@@ -211,6 +245,11 @@ export class RealtimeVoiceAgentController {
     }
     this.resetSessionMemory();
     this.setStatus('online_muted', `Realtime voice session connected. Microphone is muted (${reason}).`);
+
+    if (this.rotateAfterMute) {
+      this.rotateAfterMute = false;
+      await this.recoverSession(`${reason}-scheduled-rotation`, false);
+    }
   }
 
   async disconnect(reason = 'disconnect'): Promise<void> {
@@ -220,6 +259,9 @@ export class RealtimeVoiceAgentController {
 
     this.state = 'disconnecting';
     this.log('events', 'lifecycle', 'session', `Closing realtime connection (${reason})`);
+    this.clearSessionRotationTimer();
+    this.rotateAfterMute = false;
+    this.sessionExpiresAtMs = null;
 
     if (this.unlistenTaskEvents) {
       await this.unlistenTaskEvents();
@@ -270,6 +312,19 @@ export class RealtimeVoiceAgentController {
 
     this.log('events', 'server', `server -> ${String(event.type ?? 'unknown')}`, event);
     this.captureMemoryFromEvent(event);
+
+    if (event.type === 'session.created' || event.type === 'session.updated') {
+      this.captureSessionLifetime(event);
+    }
+
+    if (event.type === 'error') {
+      const errorRecord = asRecord(event.error);
+      const errorCode = typeof errorRecord?.code === 'string' ? errorRecord.code : '';
+      if (errorCode === 'session_expired') {
+        await this.recoverSession('session-expired');
+        return;
+      }
+    }
 
     if (event.type === 'response.done') {
       const responseRecord = asRecord(event.response);
@@ -426,6 +481,16 @@ export class RealtimeVoiceAgentController {
     });
   }
 
+  private isTransportReady(): boolean {
+    return Boolean(
+      this.dataChannel &&
+      this.dataChannel.readyState === 'open' &&
+      this.peerConnection &&
+      this.peerConnection.connectionState !== 'failed' &&
+      this.peerConnection.connectionState !== 'closed',
+    );
+  }
+
   private log(section: VoiceFeedSection, kind: VoiceFeedKind, title: string, body: unknown): void {
     this.callbacks.onFeedItem({
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -447,6 +512,82 @@ export class RealtimeVoiceAgentController {
     } catch (error) {
       this.log('tasks', 'error', 'memory preload failed', error instanceof Error ? error.message : String(error));
       return null;
+    }
+  }
+
+  private captureSessionLifetime(event: Record<string, unknown>): void {
+    const sessionRecord = asRecord(event.session);
+    const expiresAtSeconds =
+      typeof sessionRecord?.expires_at === 'number'
+        ? sessionRecord.expires_at
+        : null;
+    if (!expiresAtSeconds) {
+      return;
+    }
+
+    this.sessionExpiresAtMs = expiresAtSeconds * 1000;
+    this.scheduleSessionRotation(this.sessionExpiresAtMs);
+  }
+
+  private scheduleSessionRotation(expiresAtMs?: number | null): void {
+    this.clearSessionRotationTimer();
+
+    const now = Date.now();
+    const effectiveExpiry = expiresAtMs ?? now + FALLBACK_SESSION_DURATION_MS;
+    const desiredRotateAt = Math.max(
+      now + MIN_SESSION_ROTATION_DELAY_MS,
+      effectiveExpiry - SESSION_ROTATION_BUFFER_MS,
+    );
+    const delayMs = desiredRotateAt - now;
+
+    this.log('events', 'lifecycle', 'session', {
+      message: 'Scheduled proactive realtime session rotation.',
+      rotateAt: new Date(desiredRotateAt).toISOString(),
+      expiresAt: new Date(effectiveExpiry).toISOString(),
+      delayMs,
+    });
+
+    this.sessionRotationTimer = window.setTimeout(() => {
+      if (this.state === 'idle' || this.state === 'disconnecting' || this.state === 'error') {
+        return;
+      }
+
+      if (this.state === 'online_listening') {
+        this.rotateAfterMute = true;
+        this.log('events', 'lifecycle', 'session', 'Scheduled session rotation is waiting for the microphone to mute.');
+        return;
+      }
+
+      void this.recoverSession('scheduled-rotation', false);
+    }, delayMs);
+  }
+
+  private clearSessionRotationTimer(): void {
+    if (this.sessionRotationTimer !== null) {
+      window.clearTimeout(this.sessionRotationTimer);
+      this.sessionRotationTimer = null;
+    }
+  }
+
+  private async recoverSession(reason: string, resumeListening = this.state === 'online_listening'): Promise<void> {
+    if (this.reconnectPromise) {
+      await this.reconnectPromise;
+      return;
+    }
+
+    this.reconnectPromise = (async () => {
+      this.log('events', 'lifecycle', 'session', `Recovering realtime session (${reason})`);
+      await this.disconnect(reason);
+      await this.connect();
+      if (resumeListening) {
+        await this.attachMicrophone(reason);
+      }
+    })();
+
+    try {
+      await this.reconnectPromise;
+    } finally {
+      this.reconnectPromise = null;
     }
   }
 
