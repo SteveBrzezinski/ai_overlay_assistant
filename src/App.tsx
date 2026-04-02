@@ -656,7 +656,6 @@ export default function App() {
           const targetVisible = composerVisibleRef.current;
           const composerWindow = await Window.getByLabel(OVERLAY_COMPOSER_WINDOW_LABEL);
 
-          setVoiceOrbPinned(targetVisible);
           setComposerVisible(targetVisible);
 
           if (composerWindow) {

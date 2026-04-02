@@ -47,7 +47,7 @@ const fallbackOverlayState: OverlayState = {
   uiState: 'idle',
 };
 
-async function syncComposerWindowLayout(): Promise<void> {
+async function syncComposerWindowLayout(orbVisible: boolean): Promise<void> {
   const overlayWindow = getCurrentWindow();
   const monitor = await currentMonitor() ?? await primaryMonitor();
   if (!monitor) {
@@ -60,7 +60,7 @@ async function syncComposerWindowLayout(): Promise<void> {
   await overlayWindow.setSize(new LogicalSize(COMPOSER_LAYOUT.width, COMPOSER_LAYOUT.height));
   await overlayWindow.setPosition(
     new LogicalPosition(
-      workAreaPosition.x + workAreaSize.width - COMPOSER_PANEL_LAYOUT.width - VOICE_ORB_WIDTH - COMPOSER_GAP - SCREEN_EDGE_INSET - COMPOSER_PADDING,
+      workAreaPosition.x + workAreaSize.width - COMPOSER_PANEL_LAYOUT.width - (orbVisible ? (VOICE_ORB_WIDTH + COMPOSER_GAP) : 0) - SCREEN_EDGE_INSET - COMPOSER_PADDING,
       workAreaPosition.y + workAreaSize.height - COMPOSER_PANEL_LAYOUT.height - SCREEN_EDGE_INSET - COMPOSER_PADDING,
     ),
   );
@@ -117,13 +117,14 @@ export default function OverlayComposer() {
     });
 
     void overlayWindowRef.current.onScaleChanged(() => {
-      void syncComposerWindowLayout();
+      const orbVisible = overlayState.assistantActive || overlayState.voiceOrbPinned;
+      void syncComposerWindowLayout(orbVisible);
     }).then((cleanup) => {
       unlistenScale = cleanup;
     });
 
     void overlayWindowRef.current.emitTo<OverlayAction>('main', OVERLAY_ACTION_EVENT, { type: 'request-state' });
-    void syncComposerWindowLayout();
+    void syncComposerWindowLayout(false);
 
     const closeComposer = (): void => {
       void overlayWindowRef.current.emitTo<OverlayAction>('main', OVERLAY_ACTION_EVENT, { type: 'close-composer' });
@@ -144,6 +145,11 @@ export default function OverlayComposer() {
       void unlistenScale?.();
     };
   }, []);
+
+  useEffect(() => {
+    const orbVisible = overlayState.assistantActive || overlayState.voiceOrbPinned;
+    void syncComposerWindowLayout(orbVisible);
+  }, [overlayState.assistantActive, overlayState.voiceOrbPinned, overlayState.composerVisible]);
 
   const handleSubmitDraft = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
