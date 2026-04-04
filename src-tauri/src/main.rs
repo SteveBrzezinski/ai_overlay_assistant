@@ -16,6 +16,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(background::AppLifecycleState::default())
+        .manage(background::AssistantState::default())
         .manage(hotkey::HotkeyState::default())
         .manage(run_controller::RunController::default())
         .manage(settings_state)
@@ -34,6 +35,13 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_status,
             hotkey::get_hotkey_status,
+            background::get_main_window_visibility_command,
+            background::toggle_main_window_command,
+            background::get_chat_window_visibility_command,
+            background::toggle_chat_window_command,
+            background::get_assistant_state_command,
+            background::set_assistant_state_command,
+            background::request_assistant_control_command,
             voice_overlay_assistant::capture_selected_text_command,
             voice_overlay_assistant::speak_text_command,
             voice_overlay_assistant::translate_text_command,
@@ -44,6 +52,7 @@ fn main() {
             voice_overlay_assistant::reset_settings,
             voice_overlay_assistant::get_language_options,
             voice_overlay_assistant::append_stt_debug_log_command,
+            voice_overlay_assistant::transcribe_chat_audio_command,
             voice_overlay_assistant::pause_resume_current_run,
             voice_overlay_assistant::cancel_current_run,
             voice_overlay_assistant::create_voice_agent_session_command,

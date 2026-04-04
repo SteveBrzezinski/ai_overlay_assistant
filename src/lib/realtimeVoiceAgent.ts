@@ -12,6 +12,7 @@ import { openRealtimeTransport } from './realtimeVoiceTransport.js';
 import {
   SessionMemoryTracker,
   asRecord,
+  collectMessageTexts,
   firstString,
   isToolCallItem,
   normalizeMemoryText,
@@ -47,10 +48,28 @@ export type VoiceAgentStatus = {
   session?: CreateVoiceAgentSessionResult | null;
 };
 
+export type RealtimeChatEvent =
+  | {
+      type: 'assistant-message';
+      replyToMessageId?: string | null;
+      text: string;
+    }
+  | {
+      type: 'assistant-error';
+      replyToMessageId?: string | null;
+      detail: string;
+    };
+
 export type RealtimeVoiceAgentCallbacks = {
   onFeedItem: (item: VoiceFeedItem) => void;
   onStatus: (status: VoiceAgentStatus) => void;
   onAssistantControlRequest?: (request: { action: 'deactivate'; reason: string }) => void;
+  onChatEvent?: (event: RealtimeChatEvent) => void;
+};
+
+type RealtimeResponseContext = {
+  channel: string;
+  messageId?: string | null;
 };
 
 export class RealtimeVoiceAgentController {
@@ -72,6 +91,7 @@ export class RealtimeVoiceAgentController {
   private sessionRotationTimer: number | null = null;
   private sessionExpiresAtMs: number | null = null;
   private rotateAfterMute = false;
+  private responseContexts = new Map<string, RealtimeResponseContext>();
 
   constructor(callbacks: RealtimeVoiceAgentCallbacks) {
     this.callbacks = callbacks;
@@ -175,6 +195,47 @@ export class RealtimeVoiceAgentController {
     await this.attachMicrophone(reason);
   }
 
+  async sendTextMessage(text: string, messageId: string): Promise<void> {
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      throw new Error('Chat text was empty.');
+    }
+    if (this.reconnectPromise) {
+      await this.reconnectPromise;
+    }
+    if (this.state === 'idle' || this.state === 'error' || this.state === 'connecting') {
+      await this.connect();
+    }
+    if (!this.isTransportReady()) {
+      this.log(
+        'events',
+        'lifecycle',
+        'session',
+        `Realtime transport was not ready before chat send. Recovering session (${messageId}).`,
+      );
+      await this.recoverSession(`chat-${messageId}`, false);
+    }
+
+    this.sendRealtimeEvent({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: normalizedText }],
+      },
+    });
+    this.sendRealtimeEvent({
+      type: 'response.create',
+      response: {
+        metadata: {
+          channel: 'chat',
+          messageId,
+        },
+        output_modalities: ['text'],
+      },
+    });
+  }
+
   async mute(reason = 'deactivate'): Promise<void> {
     if (this.state === 'idle' || this.state === 'disconnecting' || this.state === 'error') {
       return;
@@ -239,6 +300,7 @@ export class RealtimeVoiceAgentController {
     this.session = null;
     this.recentMemory = null;
     this.announcedFinalTasks.clear();
+    this.responseContexts.clear();
     this.memoryTracker.reset();
     this.setStatus('idle', 'Realtime voice session is disconnected.');
   }
@@ -285,6 +347,7 @@ export class RealtimeVoiceAgentController {
 
     this.log('events', 'server', `server -> ${firstString(event.type, 'unknown')}`, event);
     this.memoryTracker.captureMemoryFromEvent(event);
+    const responseContext = this.captureResponseContext(event);
 
     if (event.type === 'session.created' || event.type === 'session.updated') {
       this.captureSessionLifetime(event);
@@ -293,6 +356,13 @@ export class RealtimeVoiceAgentController {
     if (event.type === 'error') {
       const errorRecord = asRecord(event.error);
       const errorCode = typeof errorRecord?.code === 'string' ? errorRecord.code : '';
+      if (responseContext?.channel === 'chat') {
+        this.callbacks.onChatEvent?.({
+          type: 'assistant-error',
+          replyToMessageId: responseContext.messageId ?? null,
+          detail: firstString(errorRecord?.message, errorRecord?.type, 'Chat response failed.'),
+        });
+      }
       if (errorCode === 'session_expired') {
         await this.recoverSession('session-expired');
         return;
@@ -301,16 +371,50 @@ export class RealtimeVoiceAgentController {
 
     if (event.type === 'response.done') {
       const responseRecord = asRecord(event.response);
+      const responseId = firstString(responseRecord?.id);
       const output = Array.isArray(responseRecord?.output) ? responseRecord.output : [];
+      let executedToolCall = false;
       for (const item of output) {
         if (isToolCallItem(item)) {
-          await this.executeToolCall(item);
+          executedToolCall = true;
+          await this.executeToolCall(item, responseContext);
         }
+      }
+
+      if (responseContext?.channel === 'chat') {
+        const assistantText = output
+          .flatMap((item) => {
+            const record = asRecord(item);
+            return record ? collectMessageTexts(record) : [];
+          })
+          .join('\n\n')
+          .trim();
+
+        if (assistantText) {
+          this.callbacks.onChatEvent?.({
+            type: 'assistant-message',
+            replyToMessageId: responseContext.messageId ?? null,
+            text: assistantText,
+          });
+        } else if (!executedToolCall) {
+          this.callbacks.onChatEvent?.({
+            type: 'assistant-error',
+            replyToMessageId: responseContext.messageId ?? null,
+            detail: 'The assistant did not return a text response.',
+          });
+        }
+      }
+
+      if (responseId) {
+        this.responseContexts.delete(responseId);
       }
     }
   }
 
-  private async executeToolCall(item: ToolCallItem): Promise<void> {
+  private async executeToolCall(
+    item: ToolCallItem,
+    responseContext?: RealtimeResponseContext | null,
+  ): Promise<void> {
     let parsedArguments: Record<string, unknown> = {};
     try {
       parsedArguments = item.arguments ? (JSON.parse(item.arguments) as Record<string, unknown>) : {};
@@ -362,9 +466,29 @@ export class RealtimeVoiceAgentController {
           output: JSON.stringify(toolResult),
         },
       });
-      this.sendRealtimeEvent({ type: 'response.create' });
+      this.sendRealtimeEvent(
+        responseContext?.channel === 'chat'
+          ? {
+              type: 'response.create',
+              response: {
+                metadata: {
+                  channel: 'chat',
+                  messageId: responseContext.messageId ?? null,
+                },
+                output_modalities: ['text'],
+              },
+            }
+          : { type: 'response.create' },
+      );
     } catch (error) {
       this.log('events', 'error', 'tool response dispatch failed', error instanceof Error ? error.message : String(error));
+      if (responseContext?.channel === 'chat') {
+        this.callbacks.onChatEvent?.({
+          type: 'assistant-error',
+          replyToMessageId: responseContext.messageId ?? null,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     if (item.name === 'deactivate_voice_assistant') {
@@ -525,6 +649,29 @@ export class RealtimeVoiceAgentController {
       window.clearTimeout(this.sessionRotationTimer);
       this.sessionRotationTimer = null;
     }
+  }
+
+  private captureResponseContext(event: Record<string, unknown>): RealtimeResponseContext | null {
+    const responseRecord = asRecord(event.response);
+    const responseId = firstString(responseRecord?.id, event.response_id);
+    const responseMetadata = asRecord(responseRecord?.metadata);
+    const channel = firstString(responseMetadata?.channel);
+    const messageId = firstString(responseMetadata?.messageId);
+
+    if (responseId && (channel || messageId)) {
+      const context = {
+        channel: channel || this.responseContexts.get(responseId)?.channel || '',
+        messageId: messageId || this.responseContexts.get(responseId)?.messageId || null,
+      };
+      this.responseContexts.set(responseId, context);
+      return context;
+    }
+
+    if (responseId && this.responseContexts.has(responseId)) {
+      return this.responseContexts.get(responseId) ?? null;
+    }
+
+    return null;
   }
 
   private async recoverSession(

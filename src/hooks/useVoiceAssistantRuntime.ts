@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { appendSttDebugLog, onLiveSttControl, type AppSettings, type CreateVoiceAgentSessionResult, type SttDebugEntry } from '../lib/voiceOverlay';
+import {
+  appendSttDebugLog,
+  emitVoiceChatState,
+  onAssistantControlRequest,
+  onLiveSttControl,
+  onVoiceChatSubmitRequest,
+  onVoiceChatSyncRequest,
+  setAssistantState,
+  type AppSettings,
+  type CreateVoiceAgentSessionResult,
+  type SttDebugEntry,
+  type VoiceChatMessage,
+} from '../lib/voiceOverlay';
 import i18n from '../i18n';
 import { LiveSttController, type AssistantStateSnapshot, type ProviderSnapshot } from '../lib/liveStt';
 import {
   RealtimeVoiceAgentController,
+  type RealtimeChatEvent,
   type VoiceConnectionState,
   type VoiceFeedItem,
 } from '../lib/realtimeVoiceAgent';
@@ -14,7 +27,6 @@ import {
   type AssistantActivationSource,
   type ProviderSnapshotMap,
 } from '../lib/app/appModel';
-
 type UseVoiceAssistantRuntimeOptions = {
   settings: AppSettings;
   savedSettings: AppSettings;
@@ -75,6 +87,9 @@ export function useVoiceAssistantRuntime(
   const [lastSttProvider, setLastSttProvider] = useState('');
   const [lastSttDebugLogPath, setLastSttDebugLogPath] = useState('');
   const [lastSttActiveTranscript, setLastSttActiveTranscript] = useState('');
+  const [chatMessages, setChatMessages] = useState<VoiceChatMessage[]>([]);
+  const [chatStatusText, setChatStatusText] = useState('Chat bereit.');
+  const [isChatAssistantResponding, setIsChatAssistantResponding] = useState(false);
   const liveSttControllerRef = useRef<LiveSttController | null>(null);
   const realtimeVoiceAgentRef = useRef<RealtimeVoiceAgentController | null>(null);
   const startLiveTranscriptionRef = useRef<(options?: { activateImmediately?: boolean }) => Promise<void>>(
@@ -88,6 +103,69 @@ export function useVoiceAssistantRuntime(
   );
   const autoStartLiveTranscriptionRef = useRef(false);
   const sttDebugWriteTimerRef = useRef<number | null>(null);
+  const pendingChatMessageIdRef = useRef<string | null>(null);
+  const ensureSavedSettingsRef = useRef(ensureSavedSettings);
+  const publishChatStateRef = useRef<() => void>(() => {});
+
+  const appendChatMessage = useCallback((message: VoiceChatMessage): void => {
+    setChatMessages((current) => [...current, message].slice(-40));
+  }, []);
+
+  const handleChatEvent = useCallback((event: RealtimeChatEvent): void => {
+    if (event.type === 'assistant-message') {
+      if (
+        pendingChatMessageIdRef.current &&
+        pendingChatMessageIdRef.current === (event.replyToMessageId ?? null)
+      ) {
+        pendingChatMessageIdRef.current = null;
+      }
+      setIsChatAssistantResponding(false);
+      setChatStatusText('Chat bereit.');
+      appendChatMessage({
+        id: `chat-assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: 'assistant',
+        text: event.text,
+        createdAtMs: Date.now(),
+        status: 'complete',
+        replyToMessageId: event.replyToMessageId ?? null,
+      });
+      return;
+    }
+
+    if (
+      pendingChatMessageIdRef.current &&
+      pendingChatMessageIdRef.current === (event.replyToMessageId ?? null)
+    ) {
+      pendingChatMessageIdRef.current = null;
+    }
+    setIsChatAssistantResponding(false);
+    setChatStatusText(event.detail);
+    appendChatMessage({
+      id: `chat-system-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      role: 'system',
+      text: event.detail,
+      createdAtMs: Date.now(),
+      status: 'error',
+      replyToMessageId: event.replyToMessageId ?? null,
+    });
+  }, [appendChatMessage]);
+
+  const publishChatState = useCallback((): void => {
+    void emitVoiceChatState({
+      messages: chatMessages,
+      isAssistantResponding: isChatAssistantResponding,
+      statusText: chatStatusText,
+      connectionState: voiceAgentState,
+      assistantActive,
+    }).catch(() => {
+      // The chat overlay is optional. Ignore failed sync attempts when it is unavailable.
+    });
+  }, [assistantActive, chatMessages, chatStatusText, isChatAssistantResponding, voiceAgentState]);
+
+  useEffect(() => {
+    ensureSavedSettingsRef.current = ensureSavedSettings;
+    publishChatStateRef.current = publishChatState;
+  }, [ensureSavedSettings, publishChatState]);
 
   const applyAssistantState = useCallback((snapshot: AssistantStateSnapshot): void => {
     setAssistantActive(snapshot.active);
@@ -124,6 +202,9 @@ export function useVoiceAssistantRuntime(
           void deactivateAssistantVoiceRef.current(reason || 'assistant-requested');
         }
       },
+      onChatEvent: (event) => {
+        handleChatEvent(event);
+      },
     });
 
     realtimeVoiceAgentRef.current = controller;
@@ -132,7 +213,7 @@ export function useVoiceAssistantRuntime(
     } catch {
       realtimeVoiceAgentRef.current = null;
     }
-  }, []);
+  }, [handleChatEvent]);
 
   const stopVoiceAgent = useCallback(async (reason = 'deactivate'): Promise<void> => {
     if (realtimeVoiceAgentRef.current) {
@@ -290,6 +371,99 @@ export function useVoiceAssistantRuntime(
   }, [activateAssistantVoice, deactivateAssistantVoice, startLiveTranscription]);
 
   useEffect(() => {
+    void setAssistantState(assistantActive).catch(() => {
+      // Keep the action bar state mirror best-effort; the runtime stays functional without it.
+    });
+  }, [assistantActive]);
+
+  useEffect(() => {
+    publishChatState();
+  }, [publishChatState]);
+
+  useEffect(() => {
+    let unlistenAssistantControl: (() => void | Promise<void>) | undefined;
+
+    void onAssistantControlRequest((event) => {
+      if (event.action === 'activate') {
+        if (liveSttControllerRef.current) {
+          liveSttControllerRef.current.manualActivate('manual');
+        } else {
+          void activateAssistantVoiceRef.current('manual');
+        }
+        return;
+      }
+
+      void deactivateAssistantVoiceRef.current('manual');
+    }).then((cleanup) => {
+      unlistenAssistantControl = cleanup;
+    });
+
+    return () => {
+      void unlistenAssistantControl?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlistenChatSync: (() => void | Promise<void>) | undefined;
+    let unlistenChatSubmit: (() => void | Promise<void>) | undefined;
+
+    void onVoiceChatSyncRequest(() => {
+      publishChatStateRef.current();
+    }).then((cleanup) => {
+      unlistenChatSync = cleanup;
+    });
+
+    void onVoiceChatSubmitRequest((event) => {
+      const text = event.text.trim();
+      const messageId = event.messageId.trim();
+      if (!text || !messageId || pendingChatMessageIdRef.current) {
+        return;
+      }
+
+      appendChatMessage({
+        id: messageId,
+        role: 'user',
+        text,
+        createdAtMs: Date.now(),
+        status: 'complete',
+      });
+      pendingChatMessageIdRef.current = messageId;
+      setIsChatAssistantResponding(true);
+      setChatStatusText('Assistent antwortet...');
+
+      void (async () => {
+        try {
+          await ensureSavedSettingsRef.current();
+          await startVoiceAgent();
+          await realtimeVoiceAgentRef.current?.sendTextMessage(text, messageId);
+        } catch (error: unknown) {
+          const detail = error instanceof Error ? error.message : String(error);
+          if (pendingChatMessageIdRef.current === messageId) {
+            pendingChatMessageIdRef.current = null;
+          }
+          setIsChatAssistantResponding(false);
+          setChatStatusText(detail);
+          appendChatMessage({
+            id: `chat-system-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            role: 'system',
+            text: detail,
+            createdAtMs: Date.now(),
+            status: 'error',
+            replyToMessageId: messageId,
+          });
+        }
+      })();
+    }).then((cleanup) => {
+      unlistenChatSubmit = cleanup;
+    });
+
+    return () => {
+      void unlistenChatSync?.();
+      void unlistenChatSubmit?.();
+    };
+  }, [appendChatMessage, startVoiceAgent]);
+
+  useEffect(() => {
     let unlistenLiveSttControl: (() => void | Promise<void>) | undefined;
 
     void onLiveSttControl((event) => {
@@ -327,6 +501,25 @@ export function useVoiceAssistantRuntime(
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (voiceAgentState !== 'error' || !pendingChatMessageIdRef.current) {
+      return;
+    }
+
+    const replyToMessageId = pendingChatMessageIdRef.current;
+    pendingChatMessageIdRef.current = null;
+    setIsChatAssistantResponding(false);
+    setChatStatusText(voiceAgentDetail);
+    appendChatMessage({
+      id: `chat-system-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      role: 'system',
+      text: voiceAgentDetail,
+      createdAtMs: Date.now(),
+      status: 'error',
+      replyToMessageId,
+    });
+  }, [appendChatMessage, voiceAgentDetail, voiceAgentState]);
 
   useEffect(() => {
     if (!isLiveTranscribing || !liveTranscriptionSessionId) {

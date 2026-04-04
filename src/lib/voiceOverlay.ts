@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 export type CaptureOptions = {
   copyDelayMs?: number;
@@ -255,9 +255,73 @@ export type LiveSttControlEvent = {
   source: string;
 };
 
+export type MainWindowVisibilityPayload = {
+  visible: boolean;
+};
+
+export type ChatWindowVisibilityPayload = {
+  visible: boolean;
+};
+
+export type AssistantStatePayload = {
+  active: boolean;
+};
+
+export type AssistantControlRequestEvent = {
+  action: 'activate' | 'deactivate';
+  source: string;
+};
+
+export type VoiceChatMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  text: string;
+  createdAtMs: number;
+  status: 'complete' | 'error';
+  replyToMessageId?: string | null;
+};
+
+export type VoiceChatState = {
+  messages: VoiceChatMessage[];
+  isAssistantResponding: boolean;
+  statusText: string;
+  connectionState: string;
+  assistantActive: boolean;
+};
+
+export type VoiceChatSubmitEvent = {
+  messageId: string;
+  text: string;
+};
+
+export type VoiceChatSyncRequestEvent = {
+  source: string;
+};
+
+export type TranscribeChatAudioRequest = {
+  audioBase64: string;
+  mimeType: string;
+  fileName: string;
+  language?: string | null;
+  model?: string | null;
+};
+
+export type TranscribeChatAudioResult = {
+  text: string;
+  model: string;
+  language?: string | null;
+};
+
 const HOTKEY_STATUS_EVENT = 'hotkey-status';
 const LIVE_STT_CONTROL_EVENT = 'live-stt-control';
 const VOICE_AGENT_TASK_EVENT = 'voice-agent-task';
+const MAIN_WINDOW_VISIBILITY_EVENT = 'main-window-visibility-changed';
+const CHAT_WINDOW_VISIBILITY_EVENT = 'chat-window-visibility-changed';
+const ASSISTANT_STATE_EVENT = 'assistant-state-changed';
+const ASSISTANT_CONTROL_EVENT = 'assistant-control-request';
+const VOICE_CHAT_STATE_EVENT = 'voice-chat-state';
+const VOICE_CHAT_SYNC_REQUEST_EVENT = 'voice-chat-sync-request';
+const VOICE_CHAT_SUBMIT_EVENT = 'voice-chat-submit';
 
 export async function getAppStatus(): Promise<string> {
   return invoke<string>('app_status');
@@ -283,6 +347,40 @@ export async function getLanguageOptions(): Promise<LanguageOption[]> {
   return invoke<LanguageOption[]>('get_language_options');
 }
 
+export async function getMainWindowVisibility(): Promise<boolean> {
+  const payload = await invoke<MainWindowVisibilityPayload>('get_main_window_visibility_command');
+  return payload.visible;
+}
+
+export async function toggleMainWindow(): Promise<boolean> {
+  const payload = await invoke<MainWindowVisibilityPayload>('toggle_main_window_command');
+  return payload.visible;
+}
+
+export async function getChatWindowVisibility(): Promise<boolean> {
+  const payload = await invoke<ChatWindowVisibilityPayload>('get_chat_window_visibility_command');
+  return payload.visible;
+}
+
+export async function toggleChatWindow(): Promise<boolean> {
+  const payload = await invoke<ChatWindowVisibilityPayload>('toggle_chat_window_command');
+  return payload.visible;
+}
+
+export async function getAssistantState(): Promise<boolean> {
+  const payload = await invoke<AssistantStatePayload>('get_assistant_state_command');
+  return payload.active;
+}
+
+export async function setAssistantState(active: boolean): Promise<boolean> {
+  const payload = await invoke<AssistantStatePayload>('set_assistant_state_command', { active });
+  return payload.active;
+}
+
+export async function requestAssistantControl(action: 'activate' | 'deactivate'): Promise<void> {
+  await invoke('request_assistant_control_command', { action });
+}
+
 export async function onHotkeyStatus(callback: (status: HotkeyStatus) => void): Promise<UnlistenFn> {
   return listen<HotkeyStatus>(HOTKEY_STATUS_EVENT, (event) => callback(event.payload));
 }
@@ -291,8 +389,76 @@ export async function onLiveSttControl(callback: (event: LiveSttControlEvent) =>
   return listen<LiveSttControlEvent>(LIVE_STT_CONTROL_EVENT, (event) => callback(event.payload));
 }
 
+export async function onMainWindowVisibility(
+  callback: (payload: MainWindowVisibilityPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<MainWindowVisibilityPayload>(MAIN_WINDOW_VISIBILITY_EVENT, (event) =>
+    callback(event.payload),
+  );
+}
+
+export async function onChatWindowVisibility(
+  callback: (payload: ChatWindowVisibilityPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<ChatWindowVisibilityPayload>(CHAT_WINDOW_VISIBILITY_EVENT, (event) =>
+    callback(event.payload),
+  );
+}
+
+export async function onAssistantStateChange(
+  callback: (payload: AssistantStatePayload) => void,
+): Promise<UnlistenFn> {
+  return listen<AssistantStatePayload>(ASSISTANT_STATE_EVENT, (event) => callback(event.payload));
+}
+
+export async function onAssistantControlRequest(
+  callback: (payload: AssistantControlRequestEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<AssistantControlRequestEvent>(ASSISTANT_CONTROL_EVENT, (event) =>
+    callback(event.payload),
+  );
+}
+
 export async function onVoiceAgentTask(callback: (event: VoiceTaskEvent) => void): Promise<UnlistenFn> {
   return listen<VoiceTaskEvent>(VOICE_AGENT_TASK_EVENT, (event) => callback(event.payload));
+}
+
+export async function emitVoiceChatState(state: VoiceChatState): Promise<void> {
+  await emitTo('chat-overlay', VOICE_CHAT_STATE_EVENT, state);
+}
+
+export async function requestVoiceChatSync(source = 'chat-overlay'): Promise<void> {
+  await emitTo('main', VOICE_CHAT_SYNC_REQUEST_EVENT, { source });
+}
+
+export async function submitVoiceChatMessage(payload: VoiceChatSubmitEvent): Promise<void> {
+  await emitTo('main', VOICE_CHAT_SUBMIT_EVENT, payload);
+}
+
+export async function onVoiceChatState(
+  callback: (state: VoiceChatState) => void,
+): Promise<UnlistenFn> {
+  return listen<VoiceChatState>(VOICE_CHAT_STATE_EVENT, (event) => callback(event.payload));
+}
+
+export async function onVoiceChatSyncRequest(
+  callback: (payload: VoiceChatSyncRequestEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<VoiceChatSyncRequestEvent>(VOICE_CHAT_SYNC_REQUEST_EVENT, (event) =>
+    callback(event.payload),
+  );
+}
+
+export async function onVoiceChatSubmitRequest(
+  callback: (payload: VoiceChatSubmitEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<VoiceChatSubmitEvent>(VOICE_CHAT_SUBMIT_EVENT, (event) => callback(event.payload));
+}
+
+export async function transcribeChatAudio(
+  request: TranscribeChatAudioRequest,
+): Promise<TranscribeChatAudioResult> {
+  return invoke<TranscribeChatAudioResult>('transcribe_chat_audio_command', { request });
 }
 
 export async function captureAndSpeak(

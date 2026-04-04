@@ -1,4 +1,5 @@
 use crate::{app_icon, settings::AppSettings};
+use serde::Serialize;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -8,18 +9,54 @@ use tauri::{
     menu::MenuBuilder,
     menu::MenuEvent,
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Runtime, Window, WindowEvent,
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent,
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
+const ACTION_BAR_WINDOW_LABEL: &str = "action-bar";
+const CHAT_WINDOW_LABEL: &str = "chat-overlay";
 const TRAY_ICON_ID: &str = "voice-overlay-assistant-tray";
 const TRAY_OPEN_MENU_ID: &str = "tray-open-main-window";
 const TRAY_QUIT_MENU_ID: &str = "tray-quit-app";
 const STARTUP_SCRIPT_NAME: &str = "Voice Overlay Assistant.vbs";
+const MAIN_WINDOW_VISIBILITY_EVENT: &str = "main-window-visibility-changed";
+const CHAT_WINDOW_VISIBILITY_EVENT: &str = "chat-window-visibility-changed";
+const ASSISTANT_STATE_EVENT: &str = "assistant-state-changed";
+const ASSISTANT_CONTROL_EVENT: &str = "assistant-control-request";
+const ACTION_BAR_WIDTH: f64 = 252.0;
+const ACTION_BAR_HEIGHT: f64 = 96.0;
+const ACTION_BAR_BOTTOM_MARGIN: f64 = 14.0;
+const CHAT_WINDOW_WIDTH: f64 = 860.0;
+const CHAT_WINDOW_HEIGHT: f64 = 620.0;
+const CHAT_WINDOW_BOTTOM_MARGIN: f64 = 18.0;
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainWindowVisibilityPayload {
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantStatePayload {
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssistantControlPayload {
+    pub action: String,
+    pub source: String,
+}
 
 #[derive(Default)]
 pub struct AppLifecycleState {
     allow_exit: AtomicBool,
+}
+
+#[derive(Default)]
+pub struct AssistantState {
+    active: AtomicBool,
 }
 
 impl AppLifecycleState {
@@ -29,6 +66,16 @@ impl AppLifecycleState {
 
     fn exits_allowed(&self) -> bool {
         self.allow_exit.load(Ordering::SeqCst)
+    }
+}
+
+impl AssistantState {
+    fn get(&self) -> bool {
+        self.active.load(Ordering::SeqCst)
+    }
+
+    fn set(&self, active: bool) {
+        self.active.store(active, Ordering::SeqCst);
     }
 }
 
@@ -58,7 +105,9 @@ pub fn setup_background<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app: &AppHandle<R>, event: MenuEvent| match event.id().as_ref() {
-            TRAY_OPEN_MENU_ID => show_main_window(app),
+            TRAY_OPEN_MENU_ID => {
+                let _ = show_main_window(app);
+            }
             TRAY_QUIT_MENU_ID => request_exit(app),
             _ => {}
         })
@@ -69,24 +118,30 @@ pub fn setup_background<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
                 ..
             }
             | TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
-                show_main_window(tray.app_handle())
+                let _ = show_main_window(tray.app_handle());
             }
             _ => {}
         })
         .build(app)
         .map_err(|error| format!("Failed to create tray icon: {error}"))?;
 
+    ensure_action_bar_window(app)?;
+    ensure_chat_overlay_window(app)?;
+
     Ok(())
 }
 
 pub fn apply_launch_behavior<R: Runtime>(app: &AppHandle<R>, settings: &AppSettings) {
     if should_start_hidden(settings) {
-        hide_main_window(app);
+        let _ = hide_main_window(app);
     }
 }
 
 pub fn handle_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
-    if window.label() != MAIN_WINDOW_LABEL {
+    if window.label() != MAIN_WINDOW_LABEL
+        && window.label() != ACTION_BAR_WINDOW_LABEL
+        && window.label() != CHAT_WINDOW_LABEL
+    {
         return;
     }
 
@@ -97,7 +152,13 @@ pub fn handle_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) 
         }
 
         api.prevent_close();
-        let _ = window.hide();
+        if window.label() == MAIN_WINDOW_LABEL {
+            let _ = window.hide();
+            emit_main_window_visibility(window.app_handle(), false);
+        } else if window.label() == CHAT_WINDOW_LABEL {
+            let _ = window.hide();
+            emit_chat_window_visibility(window.app_handle(), false);
+        }
     }
 }
 
@@ -127,23 +188,283 @@ fn request_exit<R: Runtime>(app: &AppHandle<R>) {
     app.exit(0);
 }
 
-fn show_main_window<R: Runtime, M: Manager<R>>(manager: &M) {
-    let Some(window) = manager.get_webview_window(MAIN_WINDOW_LABEL) else {
-        return;
-    };
-
-    if window.is_minimized().unwrap_or(false) {
-        let _ = window.unminimize();
-    }
-
-    let _ = window.show();
-    let _ = window.set_focus();
+fn emit_main_window_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
+    let _ = app.emit_to(
+        ACTION_BAR_WINDOW_LABEL,
+        MAIN_WINDOW_VISIBILITY_EVENT,
+        MainWindowVisibilityPayload { visible },
+    );
 }
 
-fn hide_main_window<R: Runtime, M: Manager<R>>(manager: &M) {
-    if let Some(window) = manager.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = window.hide();
+fn emit_chat_window_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
+    let _ = app.emit_to(
+        ACTION_BAR_WINDOW_LABEL,
+        CHAT_WINDOW_VISIBILITY_EVENT,
+        MainWindowVisibilityPayload { visible },
+    );
+    let _ = app.emit_to(
+        CHAT_WINDOW_LABEL,
+        CHAT_WINDOW_VISIBILITY_EVENT,
+        MainWindowVisibilityPayload { visible },
+    );
+}
+
+fn emit_assistant_state<R: Runtime>(app: &AppHandle<R>, active: bool) {
+    let _ = app.emit(ASSISTANT_STATE_EVENT, AssistantStatePayload { active });
+}
+
+fn ensure_action_bar_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    if app.get_webview_window(ACTION_BAR_WINDOW_LABEL).is_some() {
+        return Ok(());
     }
+
+    let (x, y) = resolve_action_bar_position(app)?;
+
+    WebviewWindowBuilder::new(app, ACTION_BAR_WINDOW_LABEL, WebviewUrl::default())
+        .title("Voice Overlay Assistant Action Bar")
+        .inner_size(ACTION_BAR_WIDTH, ACTION_BAR_HEIGHT)
+        .position(x, y)
+        .resizable(false)
+        .focused(false)
+        .visible(true)
+        .decorations(false)
+        .always_on_top(true)
+        .transparent(true)
+        .shadow(false)
+        .skip_taskbar(true)
+        .build()
+        .map_err(|error| format!("Failed to create action bar window: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_chat_overlay_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    if app.get_webview_window(CHAT_WINDOW_LABEL).is_some() {
+        return Ok(());
+    }
+
+    let (x, y) = resolve_chat_window_position(app)?;
+
+    WebviewWindowBuilder::new(app, CHAT_WINDOW_LABEL, WebviewUrl::default())
+        .title("Voice Overlay Assistant Chat")
+        .inner_size(CHAT_WINDOW_WIDTH, CHAT_WINDOW_HEIGHT)
+        .position(x, y)
+        .resizable(false)
+        .focused(false)
+        .visible(false)
+        .decorations(false)
+        .always_on_top(true)
+        .transparent(true)
+        .shadow(false)
+        .skip_taskbar(true)
+        .build()
+        .map_err(|error| format!("Failed to create chat overlay window: {error}"))?;
+
+    Ok(())
+}
+
+fn resolve_action_bar_position<R: Runtime>(app: &AppHandle<R>) -> Result<(f64, f64), String> {
+    let monitor = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .and_then(|window| window.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten())
+        .ok_or_else(|| "Failed to resolve a monitor for the action bar window.".to_string())?;
+
+    let work_area = monitor.work_area();
+    let scale_factor = monitor.scale_factor().max(1.0);
+    let x = work_area.position.x as f64 / scale_factor;
+    let y = ((work_area.position.y as f64 + work_area.size.height as f64) / scale_factor)
+        - ACTION_BAR_HEIGHT
+        - ACTION_BAR_BOTTOM_MARGIN;
+
+    Ok((x, y.max(0.0)))
+}
+
+fn resolve_chat_window_position<R: Runtime>(app: &AppHandle<R>) -> Result<(f64, f64), String> {
+    let monitor = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .and_then(|window| window.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten())
+        .ok_or_else(|| "Failed to resolve a monitor for the chat overlay window.".to_string())?;
+
+    let work_area = monitor.work_area();
+    let scale_factor = monitor.scale_factor().max(1.0);
+    let x = work_area.position.x as f64 / scale_factor
+        + (work_area.size.width as f64 / scale_factor - CHAT_WINDOW_WIDTH) / 2.0;
+    let y = ((work_area.position.y as f64 + work_area.size.height as f64) / scale_factor)
+        - CHAT_WINDOW_HEIGHT
+        - CHAT_WINDOW_BOTTOM_MARGIN;
+
+    Ok((x.max(0.0), y.max(0.0)))
+}
+
+fn get_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<tauri::WebviewWindow<R>, String> {
+    app.get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "Main window is unavailable.".to_string())
+}
+
+fn get_chat_window<R: Runtime>(app: &AppHandle<R>) -> Result<tauri::WebviewWindow<R>, String> {
+    app.get_webview_window(CHAT_WINDOW_LABEL)
+        .ok_or_else(|| "Chat overlay window is unavailable.".to_string())
+}
+
+fn main_window_is_visible<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    let window = get_main_window(app)?;
+    let is_visible = window
+        .is_visible()
+        .map_err(|error| format!("Failed to check main window visibility: {error}"))?;
+    let is_minimized = window
+        .is_minimized()
+        .map_err(|error| format!("Failed to check main window minimized state: {error}"))?;
+
+    Ok(is_visible && !is_minimized)
+}
+
+fn chat_window_is_visible<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    let window = get_chat_window(app)?;
+    let is_visible = window
+        .is_visible()
+        .map_err(|error| format!("Failed to check chat window visibility: {error}"))?;
+    let is_minimized = window
+        .is_minimized()
+        .map_err(|error| format!("Failed to check chat window minimized state: {error}"))?;
+
+    Ok(is_visible && !is_minimized)
+}
+
+fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    let window = get_main_window(app)?;
+
+    if window
+        .is_minimized()
+        .map_err(|error| format!("Failed to check main window minimized state: {error}"))?
+    {
+        window
+            .unminimize()
+            .map_err(|error| format!("Failed to restore the main window: {error}"))?;
+    }
+
+    window.show().map_err(|error| format!("Failed to show the main window: {error}"))?;
+    window.set_focus().map_err(|error| format!("Failed to focus the main window: {error}"))?;
+
+    emit_main_window_visibility(app, true);
+    Ok(true)
+}
+
+fn show_chat_window<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    let window = get_chat_window(app)?;
+
+    if window
+        .is_minimized()
+        .map_err(|error| format!("Failed to check chat window minimized state: {error}"))?
+    {
+        window
+            .unminimize()
+            .map_err(|error| format!("Failed to restore the chat window: {error}"))?;
+    }
+
+    window.show().map_err(|error| format!("Failed to show the chat window: {error}"))?;
+    window.set_focus().map_err(|error| format!("Failed to focus the chat window: {error}"))?;
+
+    emit_chat_window_visibility(app, true);
+    Ok(true)
+}
+
+fn hide_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    let window = get_main_window(app)?;
+
+    window.hide().map_err(|error| format!("Failed to hide the main window: {error}"))?;
+
+    emit_main_window_visibility(app, false);
+    Ok(false)
+}
+
+fn hide_chat_window<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    let window = get_chat_window(app)?;
+
+    window.hide().map_err(|error| format!("Failed to hide the chat window: {error}"))?;
+
+    emit_chat_window_visibility(app, false);
+    Ok(false)
+}
+
+fn toggle_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    if main_window_is_visible(app)? {
+        hide_main_window(app)
+    } else {
+        show_main_window(app)
+    }
+}
+
+fn toggle_chat_window<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    if chat_window_is_visible(app)? {
+        hide_chat_window(app)
+    } else {
+        show_chat_window(app)
+    }
+}
+
+#[tauri::command]
+pub fn get_main_window_visibility_command(
+    app: tauri::AppHandle,
+) -> Result<MainWindowVisibilityPayload, String> {
+    Ok(MainWindowVisibilityPayload { visible: main_window_is_visible(&app)? })
+}
+
+#[tauri::command]
+pub fn toggle_main_window_command(
+    app: tauri::AppHandle,
+) -> Result<MainWindowVisibilityPayload, String> {
+    Ok(MainWindowVisibilityPayload { visible: toggle_main_window(&app)? })
+}
+
+#[tauri::command]
+pub fn get_chat_window_visibility_command(
+    app: tauri::AppHandle,
+) -> Result<MainWindowVisibilityPayload, String> {
+    Ok(MainWindowVisibilityPayload { visible: chat_window_is_visible(&app)? })
+}
+
+#[tauri::command]
+pub fn toggle_chat_window_command(
+    app: tauri::AppHandle,
+) -> Result<MainWindowVisibilityPayload, String> {
+    Ok(MainWindowVisibilityPayload { visible: toggle_chat_window(&app)? })
+}
+
+#[tauri::command]
+pub fn get_assistant_state_command(
+    state: tauri::State<'_, AssistantState>,
+) -> AssistantStatePayload {
+    AssistantStatePayload { active: state.get() }
+}
+
+#[tauri::command]
+pub fn set_assistant_state_command(
+    active: bool,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AssistantState>,
+) -> AssistantStatePayload {
+    state.set(active);
+    emit_assistant_state(&app, active);
+    AssistantStatePayload { active }
+}
+
+#[tauri::command]
+pub fn request_assistant_control_command(
+    action: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if action != "activate" && action != "deactivate" {
+        return Err(format!("Unsupported assistant action '{action}'."));
+    }
+
+    app.emit_to(
+        MAIN_WINDOW_LABEL,
+        ASSISTANT_CONTROL_EVENT,
+        AssistantControlPayload { action, source: "manual".to_string() },
+    )
+    .map_err(|error| format!("Failed to emit assistant control request: {error}"))
 }
 
 #[cfg(target_os = "windows")]

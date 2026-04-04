@@ -17,7 +17,10 @@ mod commands {
     use super::run_controller::{CancelResult, PauseResumeResult, RunController};
     use super::selection_capture::{capture_selected_text, CaptureOptions, CaptureResult};
     use super::settings::{AppSettings, LanguageOption, SettingsState, LANGUAGE_OPTIONS};
-    use super::stt::{append_stt_debug_log, AppendSttDebugLogOptions, AppendSttDebugLogResult};
+    use super::stt::{
+        append_stt_debug_log, transcribe_chat_audio, AppendSttDebugLogOptions,
+        AppendSttDebugLogResult, TranscribeChatAudioRequest, TranscribeChatAudioResult,
+    };
     use super::translation::{translate_text, TranslateTextOptions, TranslateTextResult};
     use super::tts::{speak_text, SpeakTextOptions, SpeakTextResult};
     use serde::Serialize;
@@ -111,6 +114,14 @@ mod commands {
         options: AppendSttDebugLogOptions,
     ) -> Result<AppendSttDebugLogResult, String> {
         append_stt_debug_log(options)
+    }
+
+    #[tauri::command]
+    pub fn transcribe_chat_audio_command(
+        request: TranscribeChatAudioRequest,
+        settings: State<'_, SettingsState>,
+    ) -> Result<TranscribeChatAudioResult, String> {
+        transcribe_chat_audio(request, &settings.get())
     }
 
     #[derive(Debug, Serialize)]
@@ -236,7 +247,7 @@ pub use commands::{
     append_stt_debug_log_command, cancel_current_run, capture_and_speak_command,
     capture_and_translate_command, capture_selected_text_command, get_language_options,
     get_settings, pause_resume_current_run, reset_settings, speak_text_command,
-    translate_text_command, update_settings,
+    transcribe_chat_audio_command, translate_text_command, update_settings,
 };
 pub use voice_agent::{create_voice_agent_session_command, run_voice_agent_tool_command};
 pub use voice_memory::{
