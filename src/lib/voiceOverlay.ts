@@ -34,6 +34,11 @@ export type AppSettings = {
   translationTargetLanguage: string;
   playbackSpeed: number;
   openaiApiKey: string;
+  aiProviderMode: 'byo' | 'hosted';
+  hostedApiBaseUrl: string;
+  hostedAccountEmail: string;
+  hostedAccessToken: string;
+  hostedWorkspaceSlug: string;
   sttLanguage: string;
   launchAtLogin: boolean;
   startHiddenOnLaunch: boolean;
@@ -56,6 +61,73 @@ export type AppSettings = {
 export type LanguageOption = {
   code: string;
   label: string;
+};
+
+export type HostedUserSummary = {
+  id: number;
+  name: string;
+  email: string;
+  emailVerifiedAt?: string | null;
+};
+
+export type HostedWorkspaceSummary = {
+  id: number;
+  name: string;
+  slug: string;
+  isPersonal: boolean;
+  role?: string | null;
+  isCurrent: boolean;
+};
+
+export type HostedSubscriptionSummary = {
+  provider: string;
+  planKey: string;
+  status: string;
+  seats: number;
+  currentPeriodEndsAt?: string | null;
+};
+
+export type HostedEntitlementSummary = {
+  feature: string;
+  enabled: boolean;
+  usageLimit?: number | null;
+  usageCount: number;
+  resetsAt?: string | null;
+};
+
+export type HostedBillingPlanFeature = {
+  feature: string;
+  enabled: boolean;
+  usageLimit?: number | null;
+};
+
+export type HostedBillingPlan = {
+  key: string;
+  name: string;
+  seatLimit: number;
+  features: HostedBillingPlanFeature[];
+};
+
+export type HostedCheckoutSession = {
+  id: string;
+  url: string;
+  planKey: string;
+  team: HostedWorkspaceSummary;
+};
+
+export type HostedAccountStatus = {
+  connected: boolean;
+  baseUrl: string;
+  user?: HostedUserSummary | null;
+  currentTeam?: HostedWorkspaceSummary | null;
+  teams: HostedWorkspaceSummary[];
+  subscription?: HostedSubscriptionSummary | null;
+  entitlements: HostedEntitlementSummary[];
+};
+
+export type HostedAccountSyncResult = {
+  settings: AppSettings;
+  account: HostedAccountStatus;
 };
 
 export type SttDebugEntry = {
@@ -96,6 +168,11 @@ export type CreateVoiceAgentSessionResult = {
   profile: VoiceAgentProfile;
   assistantState: VoiceAgentState;
   bootstrapAction: string;
+  providerMode: 'byo' | 'hosted';
+  hostedSessionId?: string | null;
+  providerSessionId?: string | null;
+  hostedTeamSlug?: string | null;
+  clientSecretExpiresAt?: string | null;
 };
 
 export type RunVoiceAgentToolResult = {
@@ -351,6 +428,40 @@ export async function updateSettings(next: AppSettings): Promise<AppSettings> {
 
 export async function resetSettings(): Promise<AppSettings> {
   return invoke<AppSettings>('reset_settings');
+}
+
+export async function loginHostedAccount(
+  baseUrl: string,
+  email: string,
+  password: string,
+): Promise<HostedAccountSyncResult> {
+  return invoke<HostedAccountSyncResult>('login_hosted_account_command', {
+    baseUrl,
+    email,
+    password,
+  });
+}
+
+export async function getHostedAccountStatus(): Promise<HostedAccountStatus> {
+  return invoke<HostedAccountStatus>('get_hosted_account_status_command');
+}
+
+export async function logoutHostedAccount(): Promise<AppSettings> {
+  return invoke<AppSettings>('logout_hosted_account_command');
+}
+
+export async function getHostedBillingPlans(): Promise<HostedBillingPlan[]> {
+  return invoke<HostedBillingPlan[]>('get_hosted_billing_plans_command');
+}
+
+export async function createHostedCheckoutSession(
+  planKey: string,
+): Promise<HostedCheckoutSession> {
+  return invoke<HostedCheckoutSession>('create_hosted_checkout_session_command', { planKey });
+}
+
+export async function openExternalUrl(url: string): Promise<void> {
+  return invoke('open_external_url_command', { url });
 }
 
 export async function getLanguageOptions(): Promise<LanguageOption[]> {

@@ -1,6 +1,11 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { DESIGN_THEME_OPTIONS, getDesignThemeLabel, normalizeDesignThemeId } from './designThemes';
-import type { AppSettings, LanguageOption } from './lib/voiceOverlay';
+import type {
+  AppSettings,
+  HostedAccountStatus,
+  HostedBillingPlan,
+  LanguageOption,
+} from './lib/voiceOverlay';
 import {
   ASSISTANT_CUE_COOLDOWN_MS_MAX,
   ASSISTANT_MATCH_THRESHOLD_MAX,
@@ -25,6 +30,22 @@ type SettingsViewProps = {
   onReset: () => void;
   onBack: () => void;
   onOpenTraining: () => Promise<void>;
+  hostedAccount: HostedAccountStatus | null;
+  hostedAccountError: string | null;
+  isHostedAccountBusy: boolean;
+  hostedBillingPlans: HostedBillingPlan[];
+  selectedHostedPlanKey: string;
+  hostedBillingError: string | null;
+  isHostedCheckoutBusy: boolean;
+  onHostedLogin: (credentials: {
+    baseUrl: string;
+    email: string;
+    password: string;
+  }) => Promise<void>;
+  onHostedRefresh: () => Promise<void>;
+  onHostedLogout: () => Promise<void>;
+  onHostedPlanChange: (planKey: string) => void;
+  onHostedCheckout: () => Promise<void>;
   normalizeLanguageCode: (language: string) => string;
 };
 
@@ -60,9 +81,32 @@ export default function SettingsView({
   onReset,
   onBack,
   onOpenTraining,
+  hostedAccount,
+  hostedAccountError,
+  isHostedAccountBusy,
+  hostedBillingPlans,
+  selectedHostedPlanKey,
+  hostedBillingError,
+  isHostedCheckoutBusy,
+  onHostedLogin,
+  onHostedRefresh,
+  onHostedLogout,
+  onHostedPlanChange,
+  onHostedCheckout,
   normalizeLanguageCode,
 }: SettingsViewProps) {
   const [activeSection, setActiveSection] = useState<SettingsSectionId | null>(null);
+  const [hostedEmail, setHostedEmail] = useState(settings.hostedAccountEmail);
+  const [hostedPassword, setHostedPassword] = useState('');
+
+  const isHostedMode = settings.aiProviderMode === 'hosted';
+  const hostedRealtimeEnabled = Boolean(
+    hostedAccount?.entitlements.some((item) => item.feature === 'hosted_realtime' && item.enabled),
+  );
+
+  useEffect(() => {
+    setHostedEmail(settings.hostedAccountEmail);
+  }, [settings.hostedAccountEmail]);
 
   const translationTargetLabel = useMemo(
     () =>
@@ -111,8 +155,15 @@ export default function SettingsView({
       {
         id: 'api',
         label: 'API',
-        description: 'Only the OpenAI key field from dev.',
-        summary: settings.openaiApiKey ? 'Custom API key' : 'Using .env key',
+        description: 'Provider mode, hosted account, billing, and OpenAI access from dev.',
+        summary:
+          settings.aiProviderMode === 'hosted'
+            ? hostedAccount?.connected
+              ? `Hosted / ${hostedAccount.currentTeam?.name ?? hostedAccount.user?.email ?? 'connected'}`
+              : 'Hosted / sign in required'
+            : settings.openaiApiKey
+              ? 'BYO / custom API key'
+              : 'BYO / using .env key',
       },
       {
         id: 'design',
@@ -127,6 +178,7 @@ export default function SettingsView({
     assistantTrainingReadyName,
     selectedThemeLabel,
     settings.assistantName,
+    settings.aiProviderMode,
     settings.launchAtLogin,
     settings.openaiApiKey,
     settings.playbackSpeed,
@@ -135,6 +187,7 @@ export default function SettingsView({
     settings.translationTargetLanguage,
     settings.uiLanguage,
     translationTargetLabel,
+    hostedAccount,
   ]);
 
   const saveDisabled = !hasUnsavedChanges || isSavingSettings || isWorking || !canSaveSettings;
@@ -416,7 +469,9 @@ export default function SettingsView({
             <div>
               <span className="settings-panel-eyebrow">API</span>
               <h2>API</h2>
-              <p className="settings-helper">Only the OpenAI API key field remains here, exactly like in dev.</p>
+              <p className="settings-helper">
+                This keeps the dev provider flow: bring your own OpenAI key or sign in to the hosted backend.
+              </p>
             </div>
             <button type="button" className="settings-link-button" onClick={() => setActiveSection(null)}>
               Show categories
@@ -424,18 +479,252 @@ export default function SettingsView({
           </div>
           <div className="settings-grid">
             <label className="settings-field settings-field--wide">
-              <span className="info-label">OpenAI API key</span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder="sk-..."
-                value={settings.openaiApiKey}
+              <span className="info-label">AI provider mode</span>
+              <select
+                value={settings.aiProviderMode}
                 onChange={(event) =>
-                  setSettings({ ...settings, openaiApiKey: event.target.value })
+                  setSettings({
+                    ...settings,
+                    aiProviderMode: event.target.value as AppSettings['aiProviderMode'],
+                  })
                 }
-              />
-              <span className="field-note">When set here, it overrides <code>OPENAI_API_KEY</code> from <code>.env</code>.</span>
+              >
+                <option value="byo">Bring your own OpenAI key</option>
+                <option value="hosted">Hosted account</option>
+              </select>
+              <span className="field-note">
+                Hosted mode routes translation, speech, and realtime sessions through the dev backend workspace.
+              </span>
+              {isHostedMode ? (
+                <span className="field-note field-note--warning">
+                  Hosted mode uses the connected workspace and its entitlements instead of your local API key.
+                </span>
+              ) : null}
             </label>
+
+            {isHostedMode ? (
+              <>
+                <label className="settings-field settings-field--wide">
+                  <span className="info-label">Hosted backend URL</span>
+                  <input
+                    type="url"
+                    autoComplete="off"
+                    placeholder="https://app.example.com"
+                    value={settings.hostedApiBaseUrl}
+                    onChange={(event) =>
+                      setSettings({ ...settings, hostedApiBaseUrl: event.target.value })
+                    }
+                  />
+                  <span className="field-note">
+                    Example: <code>https://app.example.com</code>. Sign in once and the desktop app stores the token locally.
+                  </span>
+                </label>
+
+                <div className="settings-field settings-field--wide">
+                  <span className="info-label">Hosted account</span>
+                  <div className="settings-auth-panel">
+                    <div className="settings-auth-summary">
+                      <strong>{hostedAccount?.connected ? 'Connected' : 'Not connected'}</strong>
+                      <p>
+                        {hostedAccountError
+                          ? hostedAccountError
+                          : hostedAccount?.connected
+                            ? `Signed in as ${hostedAccount.user?.email ?? hostedEmail.trim()} in ${hostedAccount.currentTeam?.name ?? hostedAccount.currentTeam?.slug ?? 'the current workspace'}.`
+                            : 'Sign in to use the hosted dev backend from this desktop app.'}
+                      </p>
+                      {hostedAccount?.subscription ? (
+                        <p>
+                          Plan {hostedAccount.subscription.planKey} with {hostedAccount.subscription.seats} seat(s), status {hostedAccount.subscription.status}.
+                        </p>
+                      ) : null}
+                      {hostedAccount?.connected ? (
+                        <p>
+                          {hostedRealtimeEnabled
+                            ? 'Hosted realtime is enabled for this workspace.'
+                            : 'Hosted realtime is not enabled for this workspace yet.'}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="settings-auth-grid">
+                      <input
+                        type="email"
+                        autoComplete="username"
+                        placeholder="name@example.com"
+                        value={hostedEmail}
+                        onChange={(event) => setHostedEmail(event.target.value)}
+                      />
+                      <input
+                        type="password"
+                        autoComplete="current-password"
+                        placeholder="Account password"
+                        value={hostedPassword}
+                        onChange={(event) => setHostedPassword(event.target.value)}
+                      />
+                    </div>
+
+                    <div className="settings-actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={
+                          isHostedAccountBusy ||
+                          isSavingSettings ||
+                          !settings.hostedApiBaseUrl.trim() ||
+                          !hostedEmail.trim() ||
+                          !hostedPassword.trim()
+                        }
+                        onClick={() => {
+                          void (async () => {
+                            await onHostedLogin({
+                              baseUrl: settings.hostedApiBaseUrl,
+                              email: hostedEmail,
+                              password: hostedPassword,
+                            });
+                            setHostedPassword('');
+                          })();
+                        }}
+                      >
+                        {isHostedAccountBusy ? 'Signing in...' : 'Sign in'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={
+                          isHostedAccountBusy ||
+                          isSavingSettings ||
+                          !settings.hostedApiBaseUrl.trim() ||
+                          !settings.hostedAccessToken.trim()
+                        }
+                        onClick={() => void onHostedRefresh()}
+                      >
+                        Refresh
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        disabled={
+                          isHostedAccountBusy ||
+                          isSavingSettings ||
+                          !settings.hostedAccessToken.trim()
+                        }
+                        onClick={() => {
+                          void (async () => {
+                            await onHostedLogout();
+                            setHostedPassword('');
+                          })();
+                        }}
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="settings-field">
+                  <span className="info-label">Workspace</span>
+                  {hostedAccount?.teams.length ? (
+                    <select
+                      value={settings.hostedWorkspaceSlug}
+                      onChange={(event) =>
+                        setSettings({
+                          ...settings,
+                          hostedWorkspaceSlug: event.target.value,
+                        })
+                      }
+                    >
+                      <option value="">
+                        Use current workspace ({hostedAccount.currentTeam?.name ?? hostedAccount.currentTeam?.slug ?? 'server default'})
+                      </option>
+                      {hostedAccount.teams.map((team) => (
+                        <option key={team.slug} value={team.slug}>
+                          {team.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      placeholder="my-workspace"
+                      value={settings.hostedWorkspaceSlug}
+                      onChange={(event) =>
+                        setSettings({
+                          ...settings,
+                          hostedWorkspaceSlug: event.target.value,
+                        })
+                      }
+                    />
+                  )}
+                  <span className="field-note">
+                    Leave this empty to follow the workspace that is marked as current on the backend.
+                  </span>
+                </div>
+
+                <div className="settings-field settings-field--wide">
+                  <span className="info-label">Billing</span>
+                  <div className="settings-auth-panel">
+                    <div className="settings-auth-summary">
+                      <strong>Workspace billing</strong>
+                      <p>Pick one of the available hosted plans and open checkout in your browser.</p>
+                      {hostedBillingError ? (
+                        <p className="field-note field-note--error">{hostedBillingError}</p>
+                      ) : null}
+                    </div>
+
+                    <div className="settings-auth-grid">
+                      <select
+                        value={selectedHostedPlanKey}
+                        disabled={!hostedBillingPlans.length || isHostedCheckoutBusy}
+                        onChange={(event) => onHostedPlanChange(event.target.value)}
+                      >
+                        {hostedBillingPlans.length ? (
+                          hostedBillingPlans.map((plan) => (
+                            <option key={plan.key} value={plan.key}>
+                              {plan.name} - {plan.seatLimit} seat(s)
+                            </option>
+                          ))
+                        ) : (
+                          <option value="">No plans loaded</option>
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="settings-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        disabled={
+                          isHostedCheckoutBusy ||
+                          isHostedAccountBusy ||
+                          !hostedAccount?.connected ||
+                          !selectedHostedPlanKey
+                        }
+                        onClick={() => void onHostedCheckout()}
+                      >
+                        {isHostedCheckoutBusy ? 'Opening checkout...' : 'Open checkout'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <label className="settings-field settings-field--wide">
+                <span className="info-label">OpenAI API key</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="sk-..."
+                  value={settings.openaiApiKey}
+                  onChange={(event) =>
+                    setSettings({ ...settings, openaiApiKey: event.target.value })
+                  }
+                />
+                <span className="field-note">
+                  When set here, it overrides <code>OPENAI_API_KEY</code> from <code>.env</code>.
+                </span>
+              </label>
+            )}
           </div>
         </div>
       );
