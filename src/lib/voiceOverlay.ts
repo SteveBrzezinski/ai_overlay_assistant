@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { DesignThemeId } from '../designThemes';
+import type { DesignThemeId } from '../designThemes.js';
 
 export type CaptureOptions = {
   copyDelayMs?: number;
