@@ -9,10 +9,7 @@ pub struct CaptureOptions {
 
 impl Default for CaptureOptions {
     fn default() -> Self {
-        Self {
-            copy_delay_ms: Some(100),
-            restore_clipboard: Some(true),
-        }
+        Self { copy_delay_ms: Some(100), restore_clipboard: Some(true) }
     }
 }
 
@@ -136,11 +133,7 @@ Add-Type -AssemblyName System.Windows.Forms
             );
         }
 
-        Ok(CaptureResult {
-            text: captured,
-            restored_clipboard,
-            note,
-        })
+        Ok(CaptureResult { text: captured, restored_clipboard, note })
     }
 }
 

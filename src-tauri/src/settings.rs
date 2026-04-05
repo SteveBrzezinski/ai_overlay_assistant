@@ -30,6 +30,7 @@ pub struct AppSettings {
     pub design_theme_id: String,
     pub tts_format: String,
     pub first_chunk_leading_silence_ms: u32,
+    pub ui_language: String,
     pub translation_target_language: String,
     pub playback_speed: f32,
     pub openai_api_key: String,
@@ -60,6 +61,7 @@ impl Default for AppSettings {
             design_theme_id: DEFAULT_DESIGN_THEME_ID.to_string(),
             tts_format: "wav".to_string(),
             first_chunk_leading_silence_ms: 180,
+            ui_language: "en".to_string(),
             translation_target_language: "en".to_string(),
             playback_speed: DEFAULT_PLAYBACK_SPEED,
             openai_api_key: String::new(),
@@ -184,6 +186,13 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     };
 
     settings.first_chunk_leading_silence_ms = settings.first_chunk_leading_silence_ms.clamp(0, 1000);
+    let ui_language = settings.ui_language.trim().to_lowercase();
+    settings.ui_language = if matches!(ui_language.as_str(), "en" | "de") {
+        ui_language
+    } else {
+        AppSettings::default().ui_language
+    };
+
     let language = settings.translation_target_language.trim().to_lowercase();
     settings.translation_target_language = if LANGUAGE_OPTIONS.iter().any(|item| item.code == language) {
         language

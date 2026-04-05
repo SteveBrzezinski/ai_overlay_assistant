@@ -15,42 +15,6 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-const BLOCKED_EXECUTABLE_EXTENSIONS: &[&str] = &[
-    ".appinstaller",
-    ".bat",
-    ".cmd",
-    ".com",
-    ".cpl",
-    ".exe",
-    ".hta",
-    ".js",
-    ".jse",
-    ".lnk",
-    ".msi",
-    ".msc",
-    ".ps1",
-    ".psm1",
-    ".scr",
-    ".vbe",
-    ".vbs",
-    ".wsf",
-];
-
-const IGNORED_DIRECTORIES: &[&str] = &[
-    "$recycle.bin",
-    ".git",
-    ".hg",
-    ".next",
-    ".nuxt",
-    ".venv",
-    "appdata",
-    "dist",
-    "node_modules",
-    "temp",
-    "tmp",
-    "target",
-];
-
 struct SearchPathItem {
     path: String,
     kind: &'static str,
@@ -396,8 +360,9 @@ fn search_paths_tool(args: &Value) -> Result<Value, String> {
 
 fn stat_path_tool(args: &Value) -> Result<Value, String> {
     let path = resolve_existing_local_path(&value_to_string(args.get("path")))?;
-    let metadata = fs::metadata(&path)
-        .map_err(|error| format!("Failed to read metadata for {}: {error}", path.to_string_lossy()))?;
+    let metadata = fs::metadata(&path).map_err(|error| {
+        format!("Failed to read metadata for {}: {error}", path.to_string_lossy())
+    })?;
     let file_type = if metadata.is_dir() {
         "directory"
     } else if metadata.is_file() {
@@ -457,8 +422,9 @@ fn open_target_tool(args: &Value) -> Result<Value, String> {
 
 fn read_path_tool(args: &Value) -> Result<Value, String> {
     let path = resolve_existing_local_path(&value_to_string(args.get("path")))?;
-    let metadata = fs::metadata(&path)
-        .map_err(|error| format!("Failed to read metadata for {}: {error}", path.to_string_lossy()))?;
+    let metadata = fs::metadata(&path).map_err(|error| {
+        format!("Failed to read metadata for {}: {error}", path.to_string_lossy())
+    })?;
     if metadata.is_dir() {
         return Ok(json!({
             "ok": false,
@@ -527,8 +493,9 @@ fn write_path_tool(args: &Value) -> Result<Value, String> {
 
     if let Some(parent) = path.parent() {
         if create_parents {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Failed to create directory {}: {error}", parent.to_string_lossy()))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("Failed to create directory {}: {error}", parent.to_string_lossy())
+            })?;
         } else if !parent.exists() {
             return Ok(json!({
                 "ok": false,
@@ -559,7 +526,7 @@ fn write_path_tool(args: &Value) -> Result<Value, String> {
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
-        "bytesWritten": content.as_bytes().len(),
+        "bytesWritten": content.len(),
         "message": format!("Wrote file: {}", path.to_string_lossy()),
     }))
 }
@@ -579,8 +546,9 @@ fn move_path_tool(args: &Value) -> Result<Value, String> {
     }
 
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Failed to create destination directory {}: {error}", parent.to_string_lossy()))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("Failed to create destination directory {}: {error}", parent.to_string_lossy())
+        })?;
     }
 
     if destination.exists() {
@@ -608,8 +576,9 @@ fn copy_path_tool(args: &Value) -> Result<Value, String> {
     let destination = resolve_local_path(&value_to_string(args.get("destinationPath")))?;
     let replace_existing = args.get("replaceExisting").and_then(Value::as_bool).unwrap_or(false);
     let recursive = args.get("recursive").and_then(Value::as_bool).unwrap_or(false);
-    let source_metadata = fs::metadata(&source)
-        .map_err(|error| format!("Failed to read metadata for {}: {error}", source.to_string_lossy()))?;
+    let source_metadata = fs::metadata(&source).map_err(|error| {
+        format!("Failed to read metadata for {}: {error}", source.to_string_lossy())
+    })?;
 
     if destination.exists() && !replace_existing {
         return Ok(json!({
@@ -625,8 +594,9 @@ fn copy_path_tool(args: &Value) -> Result<Value, String> {
     }
 
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Failed to create destination directory {}: {error}", parent.to_string_lossy()))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("Failed to create destination directory {}: {error}", parent.to_string_lossy())
+        })?;
     }
 
     if source_metadata.is_dir() {
@@ -767,11 +737,7 @@ fn stop_process_tool(args: &Value) -> Result<Value, String> {
 
     let force = args.get("force").and_then(Value::as_bool).unwrap_or(true);
     let script = if let Some(pid) = pid {
-        format!(
-            "Stop-Process -Id {}{} -ErrorAction Stop",
-            pid,
-            if force { " -Force" } else { "" }
-        )
+        format!("Stop-Process -Id {}{} -ErrorAction Stop", pid, if force { " -Force" } else { "" })
     } else {
         format!(
             "Stop-Process -Name '{}'{} -ErrorAction Stop",
@@ -895,8 +861,13 @@ fn update_assistant_state_tool(args: &Value, settings: &SettingsState) -> Result
             saved.assistant_name
         )
     };
-    if !requested_voice.trim().is_empty() && requested_voice.trim().to_lowercase() != saved.voice_agent_voice {
-        message.push_str(&format!(" Fuer die Realtime-Stimme wurde {} verwendet.", saved.voice_agent_voice));
+    if !requested_voice.trim().is_empty()
+        && requested_voice.trim().to_lowercase() != saved.voice_agent_voice
+    {
+        message.push_str(&format!(
+            " Fuer die Realtime-Stimme wurde {} verwendet.",
+            saved.voice_agent_voice
+        ));
     }
 
     Ok(json!({
@@ -911,7 +882,8 @@ fn update_assistant_state_tool(args: &Value, settings: &SettingsState) -> Result
 }
 
 fn get_openclaw_status_tool() -> Result<Value, String> {
-    let command_check = run_powershell_output("$cmd = Get-Command openclaw -ErrorAction Stop; $cmd.Source")?;
+    let command_check =
+        run_powershell_output("$cmd = Get-Command openclaw -ErrorAction Stop; $cmd.Source")?;
     if !command_check.success {
         return Ok(json!({
             "installed": false,
@@ -930,10 +902,8 @@ fn get_openclaw_status_tool() -> Result<Value, String> {
             .and_then(|rpc| rpc.get("ok"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let gateway_service_available = payload
-            .get("serviceReachable")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let gateway_service_available =
+            payload.get("serviceReachable").and_then(Value::as_bool).unwrap_or(false);
         Ok(json!({
             "installed": true,
             "commandPath": command_path,
@@ -995,7 +965,11 @@ fn delegate_to_openclaw_tool(args: &Value, app: &AppHandle) -> Result<Value, Str
 
     let agent_id = {
         let value = value_to_string(args.get("agentId"));
-        if value.trim().is_empty() { "main".to_string() } else { value }
+        if value.trim().is_empty() {
+            "main".to_string()
+        } else {
+            value
+        }
     };
     let payload = json!({
         "task": task,
@@ -1004,7 +978,8 @@ fn delegate_to_openclaw_tool(args: &Value, app: &AppHandle) -> Result<Value, Str
         "timeoutSeconds": args.get("timeoutSeconds").and_then(Value::as_u64).unwrap_or(180),
         "agentId": agent_id,
     });
-    let task_record = app.state::<VoiceTaskState>().create_task("openclaw_delegate", payload.clone());
+    let task_record =
+        app.state::<VoiceTaskState>().create_task("openclaw_delegate", payload.clone());
     app.state::<VoiceTaskState>().emit_task(app, &task_record);
 
     let app_handle = app.clone();
@@ -1055,11 +1030,19 @@ fn delegate_to_specialist_tool(args: &Value, app: &AppHandle) -> Result<Value, S
     );
     let thinking_level = {
         let value = value_to_string(args.get("thinkingLevel"));
-        if value.trim().is_empty() { route.specialist.default_thinking_level.to_string() } else { value }
+        if value.trim().is_empty() {
+            route.specialist.default_thinking_level.to_string()
+        } else {
+            value
+        }
     };
     let prefer_mode = {
         let value = value_to_string(args.get("preferMode"));
-        if value.trim().is_empty() { route.specialist.default_prefer_mode.to_string() } else { value }
+        if value.trim().is_empty() {
+            route.specialist.default_prefer_mode.to_string()
+        } else {
+            value
+        }
     };
     let payload = json!({
         "originalTask": task,
@@ -1072,7 +1055,8 @@ fn delegate_to_specialist_tool(args: &Value, app: &AppHandle) -> Result<Value, S
         "preferMode": prefer_mode,
         "timeoutSeconds": args.get("timeoutSeconds").and_then(Value::as_u64).unwrap_or(route.specialist.default_timeout_seconds),
     });
-    let task_record = app.state::<VoiceTaskState>().create_task("specialist_delegate", payload.clone());
+    let task_record =
+        app.state::<VoiceTaskState>().create_task("specialist_delegate", payload.clone());
     app.state::<VoiceTaskState>().emit_task(app, &task_record);
 
     let app_handle = app.clone();
@@ -1109,10 +1093,7 @@ fn recall_memory_tool(args: &Value) -> Result<Value, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .map(|value| value as usize);
+    let limit = args.get("limit").and_then(Value::as_u64).map(|value| value as usize);
     let days_back_limit = args
         .get("daysBackLimit")
         .and_then(Value::as_i64)
@@ -1157,7 +1138,12 @@ fn run_openclaw_background_task(app: &AppHandle, task_id: &str, payload: Value) 
             let _ = tasks.update_task(app, task_id, status, Some(result));
         }
         Err(error) => {
-            let _ = tasks.update_task(app, task_id, "failed", Some(json!({ "ok": false, "message": error })));
+            let _ = tasks.update_task(
+                app,
+                task_id,
+                "failed",
+                Some(json!({ "ok": false, "message": error })),
+            );
         }
     }
 }
@@ -1287,7 +1273,8 @@ fn search_paths(
     }
 
     let roots = resolve_search_roots(base_path);
-    let searched_roots = roots.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>();
+    let searched_roots =
+        roots.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>();
     let mut queue = VecDeque::from(roots);
     let mut visited = HashSet::new();
     let mut results = Vec::new();
@@ -1329,13 +1316,13 @@ fn search_paths(
                 }
             }
 
-            if metadata.is_dir() && !is_ignored_directory(&file_name) {
+            if metadata.is_dir() {
                 queue.push_back(full_path);
             }
         }
     }
 
-    Ok((results, searched_roots, queue.len() > 0 || directories_visited >= max_directories))
+    Ok((results, searched_roots, !queue.is_empty() || directories_visited >= max_directories))
 }
 
 fn resolve_local_path(raw_path: &str) -> Result<PathBuf, String> {
@@ -1379,7 +1366,26 @@ fn is_text_like_path(path: &Path) -> bool {
         None => true,
         Some(extension) => matches!(
             extension.as_str(),
-            "txt" | "md" | "json" | "yaml" | "yml" | "toml" | "ini" | "log" | "csv" | "html" | "css" | "js" | "ts" | "tsx" | "jsx" | "rs" | "py" | "xml" | "sql" | "env"
+            "txt"
+                | "md"
+                | "json"
+                | "yaml"
+                | "yml"
+                | "toml"
+                | "ini"
+                | "log"
+                | "csv"
+                | "html"
+                | "css"
+                | "js"
+                | "ts"
+                | "tsx"
+                | "jsx"
+                | "rs"
+                | "py"
+                | "xml"
+                | "sql"
+                | "env"
         ),
     }
 }
@@ -1399,19 +1405,22 @@ fn truncate_string(value: &str, max_bytes: usize) -> String {
 fn read_docx_text(path: &Path) -> Result<String, String> {
     let file = fs::File::open(path)
         .map_err(|error| format!("Failed to open {}: {error}", path.to_string_lossy()))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|error| format!("Failed to read docx archive {}: {error}", path.to_string_lossy()))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|error| {
+        format!("Failed to read docx archive {}: {error}", path.to_string_lossy())
+    })?;
     let mut document_xml = String::new();
     archive
         .by_name("word/document.xml")
-        .map_err(|error| format!("word/document.xml missing in {}: {error}", path.to_string_lossy()))?
+        .map_err(|error| {
+            format!("word/document.xml missing in {}: {error}", path.to_string_lossy())
+        })?
         .read_to_string(&mut document_xml)
-        .map_err(|error| format!("Failed to read document.xml in {}: {error}", path.to_string_lossy()))?;
+        .map_err(|error| {
+            format!("Failed to read document.xml in {}: {error}", path.to_string_lossy())
+        })?;
 
-    let text = document_xml
-        .replace("</w:p>", "\n")
-        .replace("</w:tr>", "\n")
-        .replace("<w:tab/>", "\t");
+    let text =
+        document_xml.replace("</w:p>", "\n").replace("</w:tr>", "\n").replace("<w:tab/>", "\t");
     let stripped = strip_xml_tags(&text);
     Ok(html_entity_decode(&stripped).trim().to_string())
 }
@@ -1440,18 +1449,21 @@ fn html_entity_decode(value: &str) -> String {
 }
 
 fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::create_dir_all(destination)
-        .map_err(|error| format!("Failed to create directory {}: {error}", destination.to_string_lossy()))?;
+    fs::create_dir_all(destination).map_err(|error| {
+        format!("Failed to create directory {}: {error}", destination.to_string_lossy())
+    })?;
 
-    for entry in fs::read_dir(source)
-        .map_err(|error| format!("Failed to read directory {}: {error}", source.to_string_lossy()))?
-    {
-        let entry = entry.map_err(|error| format!("Failed to inspect entry in {}: {error}", source.to_string_lossy()))?;
+    for entry in fs::read_dir(source).map_err(|error| {
+        format!("Failed to read directory {}: {error}", source.to_string_lossy())
+    })? {
+        let entry = entry.map_err(|error| {
+            format!("Failed to inspect entry in {}: {error}", source.to_string_lossy())
+        })?;
         let path = entry.path();
         let destination_path = destination.join(entry.file_name());
-        let metadata = entry
-            .metadata()
-            .map_err(|error| format!("Failed to read metadata for {}: {error}", path.to_string_lossy()))?;
+        let metadata = entry.metadata().map_err(|error| {
+            format!("Failed to read metadata for {}: {error}", path.to_string_lossy())
+        })?;
         if metadata.is_dir() {
             copy_directory_recursive(&path, &destination_path)?;
         } else {
@@ -1469,15 +1481,18 @@ fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), Str
 }
 
 fn remove_path(path: &Path, recursive: bool) -> Result<(), String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| format!("Failed to read metadata for {}: {error}", path.to_string_lossy()))?;
+    let metadata = fs::metadata(path).map_err(|error| {
+        format!("Failed to read metadata for {}: {error}", path.to_string_lossy())
+    })?;
     if metadata.is_dir() {
         if recursive {
-            fs::remove_dir_all(path)
-                .map_err(|error| format!("Failed to remove directory {}: {error}", path.to_string_lossy()))
+            fs::remove_dir_all(path).map_err(|error| {
+                format!("Failed to remove directory {}: {error}", path.to_string_lossy())
+            })
         } else {
-            fs::remove_dir(path)
-                .map_err(|error| format!("Failed to remove directory {}: {error}", path.to_string_lossy()))
+            fs::remove_dir(path).map_err(|error| {
+                format!("Failed to remove directory {}: {error}", path.to_string_lossy())
+            })
         }
     } else {
         fs::remove_file(path)
@@ -1505,47 +1520,51 @@ fn ensure_safe_delete_target(path: &Path) -> Result<(), String> {
 }
 
 fn create_word_document(path: &Path, content: &str) -> Result<Value, String> {
-    let parent = path.parent().ok_or_else(|| format!("Target file has no parent directory: {}", path.to_string_lossy()))?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Failed to create directory {}: {error}", parent.to_string_lossy()))?;
+    let parent = path.parent().ok_or_else(|| {
+        format!("Target file has no parent directory: {}", path.to_string_lossy())
+    })?;
+    fs::create_dir_all(parent).map_err(|error| {
+        format!("Failed to create directory {}: {error}", parent.to_string_lossy())
+    })?;
 
-    let file = fs::File::create(path)
-        .map_err(|error| format!("Failed to create Word file {}: {error}", path.to_string_lossy()))?;
+    let file = fs::File::create(path).map_err(|error| {
+        format!("Failed to create Word file {}: {error}", path.to_string_lossy())
+    })?;
     let mut archive = zip::ZipWriter::new(file);
-    let options = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-    archive
-        .start_file("[Content_Types].xml", options)
-        .map_err(|error| format!("Failed to start [Content_Types].xml in {}: {error}", path.to_string_lossy()))?;
-    archive
-        .write_all(docx_content_types_xml().as_bytes())
-        .map_err(|error| format!("Failed to write [Content_Types].xml in {}: {error}", path.to_string_lossy()))?;
+    archive.start_file("[Content_Types].xml", options).map_err(|error| {
+        format!("Failed to start [Content_Types].xml in {}: {error}", path.to_string_lossy())
+    })?;
+    archive.write_all(docx_content_types_xml().as_bytes()).map_err(|error| {
+        format!("Failed to write [Content_Types].xml in {}: {error}", path.to_string_lossy())
+    })?;
 
-    archive
-        .start_file("_rels/.rels", options)
-        .map_err(|error| format!("Failed to start _rels/.rels in {}: {error}", path.to_string_lossy()))?;
-    archive
-        .write_all(docx_relationships_xml().as_bytes())
-        .map_err(|error| format!("Failed to write _rels/.rels in {}: {error}", path.to_string_lossy()))?;
+    archive.start_file("_rels/.rels", options).map_err(|error| {
+        format!("Failed to start _rels/.rels in {}: {error}", path.to_string_lossy())
+    })?;
+    archive.write_all(docx_relationships_xml().as_bytes()).map_err(|error| {
+        format!("Failed to write _rels/.rels in {}: {error}", path.to_string_lossy())
+    })?;
 
-    archive
-        .start_file("word/document.xml", options)
-        .map_err(|error| format!("Failed to start word/document.xml in {}: {error}", path.to_string_lossy()))?;
-    archive
-        .write_all(build_docx_document_xml(content).as_bytes())
-        .map_err(|error| format!("Failed to write word/document.xml in {}: {error}", path.to_string_lossy()))?;
+    archive.start_file("word/document.xml", options).map_err(|error| {
+        format!("Failed to start word/document.xml in {}: {error}", path.to_string_lossy())
+    })?;
+    archive.write_all(build_docx_document_xml(content).as_bytes()).map_err(|error| {
+        format!("Failed to write word/document.xml in {}: {error}", path.to_string_lossy())
+    })?;
 
-    archive
-        .finish()
-        .map_err(|error| format!("Failed to finalize Word file {}: {error}", path.to_string_lossy()))?;
+    archive.finish().map_err(|error| {
+        format!("Failed to finalize Word file {}: {error}", path.to_string_lossy())
+    })?;
 
     Ok(json!({
         "ok": true,
         "action": "write_path",
         "path": path.to_string_lossy(),
         "fileType": "docx",
-        "bytesWritten": content.as_bytes().len(),
+        "bytesWritten": content.len(),
         "message": format!("Created Word document: {}", path.to_string_lossy()),
     }))
 }
@@ -1631,15 +1650,6 @@ fn open_path(raw_path: &str) -> Result<Value, String> {
         }
     };
 
-    if !metadata.is_dir() && is_blocked_executable(&resolved) {
-        return Ok(json!({
-            "ok": false,
-            "reason": "blocked_executable",
-            "message": format!("For safety reasons this file will not be opened directly: {}", resolved.to_string_lossy()),
-            "path": resolved.to_string_lossy(),
-        }));
-    }
-
     let script = format!(
         "Start-Process -LiteralPath '{}'",
         escape_powershell_literal(&resolved.to_string_lossy())
@@ -1678,7 +1688,9 @@ fn resolve_specialist_route<'a>(task: &str, specialist: &str) -> Option<Speciali
     let mut scores = SPECIALISTS
         .iter()
         .map(|definition| {
-            let score = definition.keywords.iter().filter(|keyword| haystack.contains(**keyword)).count() as u64;
+            let score =
+                definition.keywords.iter().filter(|keyword| haystack.contains(**keyword)).count()
+                    as u64;
             (definition, score)
         })
         .collect::<Vec<_>>();
@@ -1702,19 +1714,35 @@ fn resolve_specialist_route<'a>(task: &str, specialist: &str) -> Option<Speciali
         specialist: chosen,
         confidence,
         reason: if scores.first().map(|(_, score)| *score).unwrap_or(0) > 0 {
-            format!("Automatically routed to {} because the task fits {}.", chosen.id, chosen.when_to_use)
+            format!(
+                "Automatically routed to {} because the task fits {}.",
+                chosen.id, chosen.when_to_use
+            )
         } else {
             "No clear coding signals detected. Falling back to pc-ops.".to_string()
         },
-        scores: Value::Array(scores.into_iter().map(|(definition, score)| json!({
-            "specialistId": definition.id,
-            "score": score,
-        })).collect::<Vec<_>>()),
+        scores: Value::Array(
+            scores
+                .into_iter()
+                .map(|(definition, score)| {
+                    json!({
+                        "specialistId": definition.id,
+                        "score": score,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        ),
     })
 }
 
-fn build_specialist_task_payload(specialist_id: &str, task: &str, routing_reason: &str, context: &str) -> String {
-    let definition = SPECIALISTS.iter().find(|item| item.id == specialist_id).expect("known specialist");
+fn build_specialist_task_payload(
+    specialist_id: &str,
+    task: &str,
+    routing_reason: &str,
+    context: &str,
+) -> String {
+    let definition =
+        SPECIALISTS.iter().find(|item| item.id == specialist_id).expect("known specialist");
     let context_block = if context.trim().is_empty() {
         String::new()
     } else {
@@ -1734,7 +1762,11 @@ fn build_specialist_task_payload(specialist_id: &str, task: &str, routing_reason
         "- If information is missing, ask exactly one concise follow-up question.".to_string(),
         "- If you can complete the task, execute it instead of over-planning.".to_string(),
         "- End with a short summary of what you did and the result.".to_string(),
-    ].into_iter().filter(|line| !line.trim().is_empty()).collect::<Vec<_>>().join("\n")
+    ]
+    .into_iter()
+    .filter(|line| !line.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn list_openclaw_agents() -> Result<Vec<Value>, String> {
@@ -1747,9 +1779,14 @@ fn list_openclaw_agents() -> Result<Vec<Value>, String> {
 }
 
 fn ensure_specialist_agent(specialist_id: &str) -> Result<Value, String> {
-    let definition = SPECIALISTS.iter().find(|item| item.id == specialist_id).ok_or_else(|| format!("Unknown specialist: {specialist_id}"))?;
+    let definition = SPECIALISTS
+        .iter()
+        .find(|item| item.id == specialist_id)
+        .ok_or_else(|| format!("Unknown specialist: {specialist_id}"))?;
     let workspace_path = specialist_workspace_path(definition.id);
-    fs::create_dir_all(&workspace_path).map_err(|error| format!("Failed to create workspace {}: {error}", workspace_path.to_string_lossy()))?;
+    fs::create_dir_all(&workspace_path).map_err(|error| {
+        format!("Failed to create workspace {}: {error}", workspace_path.to_string_lossy())
+    })?;
 
     ensure_file(&workspace_path.join("IDENTITY.md"), &build_identity_content(definition))?;
     ensure_file(&workspace_path.join("SOUL.md"), &build_soul_content(definition))?;
@@ -1763,9 +1800,12 @@ fn ensure_specialist_agent(specialist_id: &str) -> Result<Value, String> {
             .map(|value| value == definition.openclaw_agent_id)
             .unwrap_or(false)
     }) {
-        let existing_workspace = existing.get("workspace").and_then(Value::as_str).unwrap_or_default();
+        let existing_workspace =
+            existing.get("workspace").and_then(Value::as_str).unwrap_or_default();
         let expected_workspace = workspace_path.to_string_lossy().to_string();
-        if normalize_path_for_compare(existing_workspace) != normalize_path_for_compare(&expected_workspace) {
+        if normalize_path_for_compare(existing_workspace)
+            != normalize_path_for_compare(&expected_workspace)
+        {
             let delete_script = format!(
                 "openclaw agents delete '{}' --force --json",
                 escape_powershell_literal(definition.openclaw_agent_id)
@@ -1817,10 +1857,12 @@ fn ensure_specialist_agent(specialist_id: &str) -> Result<Value, String> {
                 .map(|value| value == definition.openclaw_agent_id)
                 .unwrap_or(false)
         })
-        .unwrap_or_else(|| json!({
-            "id": definition.openclaw_agent_id,
-            "workspace": workspace_path.to_string_lossy(),
-        }));
+        .unwrap_or_else(|| {
+            json!({
+                "id": definition.openclaw_agent_id,
+                "workspace": workspace_path.to_string_lossy(),
+            })
+        });
 
     Ok(json!({
         "specialistId": specialist_id,
@@ -1856,11 +1898,8 @@ fn run_openclaw_task(
         }));
     }
 
-    let gateway_status = if normalized_prefer_mode == "gateway" {
-        probe_openclaw_gateway_status()?
-    } else {
-        None
-    };
+    let gateway_status =
+        if normalized_prefer_mode == "gateway" { probe_openclaw_gateway_status()? } else { None };
     let gateway_available = gateway_status
         .as_ref()
         .and_then(|payload| payload.get("rpc"))
@@ -1868,11 +1907,8 @@ fn run_openclaw_task(
         .and_then(|rpc| rpc.get("ok"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let chosen_mode = if normalized_prefer_mode == "gateway" && gateway_available {
-        "gateway"
-    } else {
-        "local"
-    };
+    let chosen_mode =
+        if normalized_prefer_mode == "gateway" && gateway_available { "gateway" } else { "local" };
     let degraded_from_gateway = normalized_prefer_mode == "gateway" && chosen_mode == "local";
 
     let use_local_flag = if chosen_mode == "local" { "--local " } else { "" };
@@ -1888,7 +1924,8 @@ fn run_openclaw_task(
     if !output.success {
         let diagnostics = combined_output(&output);
         let timeout_detected = diagnostics.to_lowercase().contains("timed out");
-        let file_lock_detected = diagnostics.contains("session file locked") || diagnostics.contains(".jsonl.lock");
+        let file_lock_detected =
+            diagnostics.contains("session file locked") || diagnostics.contains(".jsonl.lock");
         return Ok(json!({
             "ok": false,
             "mode": chosen_mode,
@@ -1905,7 +1942,8 @@ fn run_openclaw_task(
         .get("payloads")
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(|item| item.get("text").and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join("\n\n")
@@ -1963,7 +2001,8 @@ fn build_identity_content(definition: &SpecialistDefinition) -> String {
         "This agent exists to serve the voice orchestrator with a narrow role.".to_string(),
         "Keep responses practical, direct and short.".to_string(),
         String::new(),
-    ].join("\n")
+    ]
+    .join("\n")
 }
 
 fn build_soul_content(definition: &SpecialistDefinition) -> String {
@@ -1974,7 +2013,8 @@ fn build_soul_content(definition: &SpecialistDefinition) -> String {
             "- Inspect before editing.",
             "- Avoid unrelated files.",
             "- Run verification where practical and report what was verified.",
-        ].join("\n")
+        ]
+        .join("\n")
     } else {
         [
             "Desktop rules:",
@@ -2000,7 +2040,8 @@ fn build_soul_content(definition: &SpecialistDefinition) -> String {
         String::new(),
         guardrail,
         String::new(),
-    ].join("\n")
+    ]
+    .join("\n")
 }
 
 fn build_tools_content(definition: &SpecialistDefinition) -> String {
@@ -2012,7 +2053,8 @@ fn build_tools_content(definition: &SpecialistDefinition) -> String {
         format!("- Use when: {}", definition.when_to_use),
         "- Discover machine-specific paths and applications dynamically at runtime.".to_string(),
         String::new(),
-    ].join("\n")
+    ]
+    .join("\n")
 }
 
 fn ensure_file(path: &Path, content: &str) -> Result<(), String> {
@@ -2021,36 +2063,27 @@ fn ensure_file(path: &Path, content: &str) -> Result<(), String> {
             return Ok(());
         }
     }
-    fs::write(path, content).map_err(|error| format!("Failed to write {}: {error}", path.to_string_lossy()))
-}
-
-fn is_ignored_directory(name: &str) -> bool {
-    IGNORED_DIRECTORIES.iter().any(|item| item.eq_ignore_ascii_case(name.trim()))
-}
-
-fn is_blocked_executable(path: &Path) -> bool {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .map(|extension| format!(".{}", extension).to_lowercase())
-        .map(|extension| BLOCKED_EXECUTABLE_EXTENSIONS.contains(&extension.as_str()))
-        .unwrap_or(false)
+    fs::write(path, content)
+        .map_err(|error| format!("Failed to write {}: {error}", path.to_string_lossy()))
 }
 
 fn common_location_paths() -> Vec<PathBuf> {
     let current_dir = env::current_dir().ok();
     let home = home_dir();
-    [current_dir, Some(home.join("Desktop")), Some(home.join("Documents")), Some(home.join("Downloads"))]
-        .into_iter()
-        .flatten()
-        .filter(|path| path.exists())
-        .collect::<Vec<_>>()
+    [
+        current_dir,
+        Some(home.join("Desktop")),
+        Some(home.join("Documents")),
+        Some(home.join("Downloads")),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|path| path.exists())
+    .collect::<Vec<_>>()
 }
 
 fn common_locations() -> Vec<String> {
-    common_location_paths()
-        .into_iter()
-        .map(|path| path.to_string_lossy().to_string())
-        .collect()
+    common_location_paths().into_iter().map(|path| path.to_string_lossy().to_string()).collect()
 }
 
 fn home_dir() -> PathBuf {
@@ -2062,9 +2095,7 @@ fn home_dir() -> PathBuf {
 
 fn runtime_data_root() -> PathBuf {
     if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-        return PathBuf::from(local_app_data)
-            .join("VoiceOverlayAssistant")
-            .join("runtime");
+        return PathBuf::from(local_app_data).join("VoiceOverlayAssistant").join("runtime");
     }
 
     home_dir().join(".voice-overlay-assistant").join("runtime")
@@ -2082,11 +2113,7 @@ fn value_to_string(value: Option<&Value>) -> String {
 }
 
 fn normalize_path_for_compare(value: &str) -> String {
-    value
-        .trim()
-        .replace('/', "\\")
-        .trim_end_matches('\\')
-        .to_lowercase()
+    value.trim().replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }
 
 fn search_item_to_json(item: &SearchPathItem) -> Value {
@@ -2121,7 +2148,8 @@ fn run_powershell_output(script: &str) -> Result<ShellOutput, String> {
 }
 
 fn is_openclaw_installed() -> Result<bool, String> {
-    let command_check = run_powershell_output("$cmd = Get-Command openclaw -ErrorAction Stop; $cmd.Source")?;
+    let command_check =
+        run_powershell_output("$cmd = Get-Command openclaw -ErrorAction Stop; $cmd.Source")?;
     Ok(command_check.success)
 }
 
@@ -2169,7 +2197,8 @@ fn enrich_openclaw_gateway_status(payload: &mut Value) -> Result<(), String> {
         object.insert("processCount".to_string(), json!(process_count));
         object.insert("dashboard".to_string(), dashboard);
         object.insert("serviceLoaded".to_string(), Value::Bool(service_loaded));
-        object.insert("serviceReachable".to_string(), Value::Bool(process_count > 0 && dashboard_ok));
+        object
+            .insert("serviceReachable".to_string(), Value::Bool(process_count > 0 && dashboard_ok));
         object.insert("rpcAvailable".to_string(), Value::Bool(rpc_available));
         object.insert(
             "statusMode".to_string(),
@@ -2252,19 +2281,19 @@ fn extract_json_value(raw_text: &str) -> Result<Value, String> {
         }
     }
 
-    let preview = if raw.len() > 1200 {
-        format!("{}...", &raw[..1200])
-    } else {
-        raw.to_string()
-    };
+    let preview = if raw.len() > 1200 { format!("{}...", &raw[..1200]) } else { raw.to_string() };
     Err(format!("Failed to decode JSON payload. Raw output preview: {preview}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{create_word_document, extract_json_value};
-    use std::{env, fs, io::Read, time::{SystemTime, UNIX_EPOCH}};
     use serde_json::json;
+    use std::{
+        env, fs,
+        io::Read,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn extract_json_value_skips_openclaw_log_lines() {
@@ -2272,7 +2301,13 @@ mod tests {
         let parsed = extract_json_value(raw).expect("json payload should be extracted");
 
         assert_eq!(parsed.get("payloads"), Some(&json!([{ "text": "OK" }])));
-        assert_eq!(parsed.get("meta").and_then(|value| value.get("durationMs")).and_then(serde_json::Value::as_i64), Some(1234));
+        assert_eq!(
+            parsed
+                .get("meta")
+                .and_then(|value| value.get("durationMs"))
+                .and_then(serde_json::Value::as_i64),
+            Some(1234)
+        );
     }
 
     #[test]

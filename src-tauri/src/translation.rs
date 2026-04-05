@@ -73,7 +73,11 @@ pub fn translate_text(
     let model = options.model.unwrap_or_else(|| DEFAULT_TRANSLATION_MODEL.to_string());
     let source_language = options.source_language.and_then(|value| {
         let trimmed = value.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     });
 
     let language_label = LANGUAGE_OPTIONS
@@ -84,13 +88,17 @@ pub fn translate_text(
 
     let system_prompt = "You are a translation engine. Return only the translated text. Preserve meaning, tone, formatting, list structure, and line breaks. Do not add explanations or quotes unless they are part of the source.";
     let user_prompt = if let Some(source_language) = &source_language {
-        format!("Translate the following text from {source_language} to {language_label}:
+        format!(
+            "Translate the following text from {source_language} to {language_label}:
 
-{text}")
+{text}"
+        )
     } else {
-        format!("Translate the following text to {language_label}:
+        format!(
+            "Translate the following text to {language_label}:
 
-{text}")
+{text}"
+        )
     };
 
     let client = reqwest::blocking::Client::new();
@@ -115,9 +123,8 @@ pub fn translate_text(
         return Err(format!("OpenAI translation failed ({status}): {body}"));
     }
 
-    let payload: ChatResponse = response
-        .json()
-        .map_err(|err| format!("Failed to decode translation response: {err}"))?;
+    let payload: ChatResponse =
+        response.json().map_err(|err| format!("Failed to decode translation response: {err}"))?;
 
     let translated = payload
         .choices
@@ -127,10 +134,5 @@ pub fn translate_text(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "Translation response was empty".to_string())?;
 
-    Ok(TranslateTextResult {
-        text: translated,
-        target_language,
-        source_language,
-        model,
-    })
+    Ok(TranslateTextResult { text: translated, target_language, source_language, model })
 }

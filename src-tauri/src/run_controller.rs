@@ -87,10 +87,7 @@ impl RunController {
         }
 
         state.next_run_id += 1;
-        let token = RunToken {
-            id: state.next_run_id,
-            action: action.clone(),
-        };
+        let token = RunToken { id: state.next_run_id, action: action.clone() };
         state.active = Some(ActiveRun {
             id: token.id,
             action,
@@ -102,13 +99,7 @@ impl RunController {
             sink: None,
         });
 
-        Ok(RunHandle {
-            access: RunAccess {
-                controller: self.clone(),
-                token,
-            },
-            finished: false,
-        })
+        Ok(RunHandle { access: RunAccess { controller: self.clone(), token }, finished: false })
     }
 
     pub fn pause_resume(&self) -> PauseResumeResult {
@@ -167,11 +158,8 @@ impl RunController {
 
     fn finish_run(&self, token: &RunToken) {
         let mut state = self.shared.state.lock().expect("run controller poisoned");
-        let should_clear = state
-            .active
-            .as_ref()
-            .map(|active| active.id == token.id)
-            .unwrap_or(false);
+        let should_clear =
+            state.active.as_ref().map(|active| active.id == token.id).unwrap_or(false);
 
         if should_clear {
             if let Some(active) = state.active.as_mut() {
@@ -226,11 +214,7 @@ impl RunController {
                     }
 
                     if active.paused {
-                        state = self
-                            .shared
-                            .pause_cv
-                            .wait(state)
-                            .expect("run controller poisoned");
+                        state = self.shared.pause_cv.wait(state).expect("run controller poisoned");
                         continue;
                     }
 
@@ -285,8 +269,7 @@ impl RunAccess {
     }
 
     pub fn update_chunk_phase(&self, phase: impl Into<String>, index: usize, total: usize) {
-        self.controller
-            .update_phase(&self.token, phase.into(), Some((index, total)));
+        self.controller.update_phase(&self.token, phase.into(), Some((index, total)));
     }
 
     pub fn check_cancelled(&self) -> Result<(), String> {

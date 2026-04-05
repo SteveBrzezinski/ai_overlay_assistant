@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 import { resolve } from 'node:path';
-import { AudioPlayer, NoopAudioPlayer, ShellAudioPlayer } from './audioPlayer.js';
-import { GenerateSpeechOptions, SpeechFileResult, generateSpeechFile } from './openaiTts.js';
+import { NoopAudioPlayer, ShellAudioPlayer, type AudioPlayer } from './audioPlayer.js';
+import { generateSpeechFile, type GenerateSpeechOptions, type SpeechFileResult } from './openaiTts.js';
 
 export interface SpeakTextOptions extends GenerateSpeechOptions {
   autoplay?: boolean;

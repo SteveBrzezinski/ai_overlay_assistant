@@ -18,6 +18,7 @@ const fallbackSettings: AppSettings = {
   ttsMode: 'classic',
   realtimeAllowLiveFallback: false,
   designThemeId: DEFAULT_DESIGN_THEME_ID,
+  uiLanguage: 'en',
   launchAtLogin: false,
   startHiddenOnLaunch: true,
   ttsFormat: 'wav',

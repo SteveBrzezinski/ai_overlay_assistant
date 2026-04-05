@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import App from './App';
+import ChatOverlayApp from './ChatOverlayApp';
 import { applyDesignTheme, DEFAULT_DESIGN_THEME_ID } from './designThemes';
+import './i18n';
 import OverlayDock from './OverlayDock';
 import OverlayComposer from './OverlayComposer';
 import VoiceOrbOverlay from './VoiceOrbOverlay';
@@ -67,6 +69,8 @@ function WindowRoot() {
   switch (windowLabel) {
     case 'action-bar':
       return <OverlayDock />;
+    case 'chat-overlay':
+      return <ChatOverlayApp />;
     case 'voice-overlay':
       return <VoiceOrbOverlay />;
     case 'overlay-composer':

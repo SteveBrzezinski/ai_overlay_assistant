@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default desktop capability for the MVP shell",
-  "windows": ["main", "action-bar", "voice-overlay", "overlay-composer"],
+  "windows": ["main", "action-bar", "voice-overlay", "overlay-composer", "chat-overlay"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
