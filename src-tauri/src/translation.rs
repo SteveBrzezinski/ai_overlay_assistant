@@ -1,4 +1,7 @@
-use crate::settings::{resolve_openai_api_key, AppSettings, LANGUAGE_OPTIONS};
+use crate::{
+    hosted_backend::translate_with_hosted_backend,
+    settings::{resolve_openai_api_key, AppSettings, LANGUAGE_OPTIONS},
+};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_TRANSLATION_MODEL: &str = "gpt-4o-mini";
@@ -67,8 +70,6 @@ pub fn translate_text(
         return Err("No text provided for translation".into());
     }
 
-    let api_key = resolve_openai_api_key(settings)?;
-
     let target_language = resolve_language(options.target_language)?;
     let model = options.model.unwrap_or_else(|| DEFAULT_TRANSLATION_MODEL.to_string());
     let source_language = options.source_language.and_then(|value| {
@@ -79,6 +80,25 @@ pub fn translate_text(
             Some(trimmed.to_string())
         }
     });
+
+    if settings.ai_provider_mode == "hosted" {
+        let hosted_result = translate_with_hosted_backend(
+            settings,
+            text,
+            target_language,
+            source_language,
+            Some(model),
+        )?;
+
+        return Ok(TranslateTextResult {
+            text: hosted_result.text,
+            target_language: hosted_result.target_language,
+            source_language: hosted_result.source_language,
+            model: hosted_result.model,
+        });
+    }
+
+    let api_key = resolve_openai_api_key(settings)?;
 
     let language_label = LANGUAGE_OPTIONS
         .iter()

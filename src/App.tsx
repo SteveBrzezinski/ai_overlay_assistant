@@ -2,16 +2,25 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   captureAndSpeak,
   captureAndTranslate,
+  createHostedCheckoutSession,
+  getHostedBillingPlans,
+  getHostedAccountStatus,
+  loginHostedAccount,
+  logoutHostedAccount,
+  openExternalUrl,
   resetSettings,
   updateSettings,
   type AppSettings,
+  type HostedBillingPlan,
   type HotkeyStatus,
+  type HostedAccountStatus,
 } from './lib/voiceOverlay';
 import {
   buildRunHistoryEntry,
   createReadinessItems,
   getAssistantNameError,
   isAssistantCalibrationComplete,
+  mergeHostedSettings,
   normalizeLanguageCode,
   type RunHistoryEntry,
   type UiState,
@@ -62,6 +71,13 @@ export default function App() {
   const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [hostedAccount, setHostedAccount] = useState<HostedAccountStatus | null>(null);
+  const [hostedAccountError, setHostedAccountError] = useState<string | null>(null);
+  const [isHostedAccountBusy, setIsHostedAccountBusy] = useState(false);
+  const [hostedBillingPlans, setHostedBillingPlans] = useState<HostedBillingPlan[]>([]);
+  const [selectedHostedPlanKey, setSelectedHostedPlanKey] = useState('');
+  const [hostedBillingError, setHostedBillingError] = useState<string | null>(null);
+  const [isHostedCheckoutBusy, setIsHostedCheckoutBusy] = useState(false);
   const applyHotkeyStatus = useCallback((status: HotkeyStatus, appendHistory = false): void => {
     setMessage(status.message);
     setCapturedPreview(status.lastCapturedText ?? '');
@@ -132,6 +148,11 @@ export default function App() {
   const canSaveSettings =
     !assistantNameError && (!assistantCalibrationRequired || assistantCalibrationComplete);
 
+  const syncHostedSettings = useCallback((nextHostedSettings: AppSettings): void => {
+    setSettings((current) => mergeHostedSettings(current, nextHostedSettings));
+    setSavedSettings((current) => mergeHostedSettings(current, nextHostedSettings));
+  }, [setSavedSettings, setSettings]);
+
   useEffect(() => {
     const nextLanguage = normalizeUiLanguage(settings.uiLanguage);
     if (i18n.resolvedLanguage !== nextLanguage) {
@@ -191,6 +212,211 @@ export default function App() {
     }
 
     return savedSettings;
+  };
+
+  useEffect(() => {
+    if (!initialStateLoaded || settings.aiProviderMode !== 'hosted') {
+      setHostedAccount(null);
+      setHostedAccountError(null);
+      setHostedBillingPlans([]);
+      setHostedBillingError(null);
+      return;
+    }
+
+    if (!savedSettings.hostedApiBaseUrl.trim() || !savedSettings.hostedAccessToken.trim()) {
+      setHostedAccount(null);
+      setHostedAccountError(null);
+      setHostedBillingPlans([]);
+      setHostedBillingError(null);
+      return;
+    }
+
+    let active = true;
+    setIsHostedAccountBusy(true);
+    setHostedAccountError(null);
+
+    void getHostedAccountStatus()
+      .then((account) => {
+        if (!active) {
+          return;
+        }
+        setHostedAccount(account);
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        const detail = error instanceof Error ? error.message : String(error);
+        setHostedAccount(null);
+        setHostedAccountError(detail);
+      })
+      .finally(() => {
+        if (active) {
+          setIsHostedAccountBusy(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    initialStateLoaded,
+    savedSettings.hostedAccessToken,
+    savedSettings.hostedApiBaseUrl,
+    settings.aiProviderMode,
+  ]);
+
+  useEffect(() => {
+    if (!initialStateLoaded || settings.aiProviderMode !== 'hosted') {
+      setHostedBillingPlans([]);
+      setHostedBillingError(null);
+      return;
+    }
+
+    if (!savedSettings.hostedApiBaseUrl.trim() || !savedSettings.hostedAccessToken.trim()) {
+      setHostedBillingPlans([]);
+      setHostedBillingError(null);
+      return;
+    }
+
+    let active = true;
+    setHostedBillingError(null);
+
+    void getHostedBillingPlans()
+      .then((plans) => {
+        if (!active) {
+          return;
+        }
+        setHostedBillingPlans(plans);
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        const detail = error instanceof Error ? error.message : String(error);
+        setHostedBillingPlans([]);
+        setHostedBillingError(detail);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    initialStateLoaded,
+    savedSettings.hostedAccessToken,
+    savedSettings.hostedApiBaseUrl,
+    settings.aiProviderMode,
+  ]);
+
+  useEffect(() => {
+    if (!hostedBillingPlans.length) {
+      setSelectedHostedPlanKey('');
+      return;
+    }
+
+    if (!hostedBillingPlans.some((plan) => plan.key === selectedHostedPlanKey)) {
+      setSelectedHostedPlanKey(hostedBillingPlans[0]?.key ?? '');
+    }
+  }, [hostedBillingPlans, selectedHostedPlanKey]);
+
+  const refreshHostedAccount = async (): Promise<void> => {
+    setIsHostedAccountBusy(true);
+    try {
+      const [account, plans] = await Promise.all([
+        getHostedAccountStatus(),
+        getHostedBillingPlans(),
+      ]);
+      setHostedAccount(account);
+      setHostedAccountError(null);
+      setHostedBillingPlans(plans);
+      setHostedBillingError(null);
+      setUiState('success');
+      setMessage(i18n.t('app.hostedStatusRefreshed'));
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setHostedAccount(null);
+      setHostedAccountError(detail);
+      setUiState('error');
+      setMessage(i18n.t('app.hostedStatusFailed', { detail }));
+    } finally {
+      setIsHostedAccountBusy(false);
+    }
+  };
+
+  const handleHostedLogin = async (credentials: {
+    baseUrl: string;
+    email: string;
+    password: string;
+  }): Promise<void> => {
+    setIsHostedAccountBusy(true);
+    try {
+      const result = await loginHostedAccount(
+        credentials.baseUrl,
+        credentials.email,
+        credentials.password,
+      );
+      syncHostedSettings(result.settings);
+      setHostedAccount(result.account);
+      setHostedAccountError(null);
+      setHostedBillingError(null);
+      setUiState('success');
+      setMessage(
+        i18n.t('app.hostedLoginSuccess', {
+          workspace:
+            result.account.currentTeam?.name ??
+            result.account.currentTeam?.slug ??
+            i18n.t('settings.hostedWorkspaceCurrentDefault'),
+        }),
+      );
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setHostedAccountError(detail);
+      setUiState('error');
+      setMessage(i18n.t('app.hostedLoginFailed', { detail }));
+    } finally {
+      setIsHostedAccountBusy(false);
+    }
+  };
+
+  const handleHostedLogout = async (): Promise<void> => {
+    setIsHostedAccountBusy(true);
+    try {
+      const nextSettings = await logoutHostedAccount();
+      syncHostedSettings(nextSettings);
+      setHostedAccount(null);
+      setHostedAccountError(null);
+      setHostedBillingPlans([]);
+      setHostedBillingError(null);
+      setUiState('success');
+      setMessage(i18n.t('app.hostedLogoutSuccess'));
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setUiState('error');
+      setMessage(i18n.t('app.hostedLogoutFailed', { detail }));
+    } finally {
+      setIsHostedAccountBusy(false);
+    }
+  };
+
+  const handleHostedCheckout = async (): Promise<void> => {
+    setIsHostedCheckoutBusy(true);
+    try {
+      const session = await createHostedCheckoutSession(selectedHostedPlanKey);
+      await openExternalUrl(session.url);
+      setUiState('success');
+      setMessage(
+        i18n.t('app.hostedCheckoutOpened', {
+          plan: session.planKey,
+          workspace: session.team.name,
+        }),
+      );
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setUiState('error');
+      setMessage(i18n.t('app.hostedCheckoutFailed', { detail }));
+    } finally {
+      setIsHostedCheckoutBusy(false);
+    }
   };
 
   const voiceRuntime = useVoiceAssistantRuntime({
@@ -372,6 +598,13 @@ export default function App() {
           isSavingSettings={isSavingSettings}
           isBusy={uiState === 'working'}
           canSaveSettings={canSaveSettings}
+          hostedAccount={hostedAccount}
+          hostedAccountError={hostedAccountError}
+          isHostedAccountBusy={isHostedAccountBusy}
+          hostedBillingPlans={hostedBillingPlans}
+          selectedHostedPlanKey={selectedHostedPlanKey}
+          hostedBillingError={hostedBillingError}
+          isHostedCheckoutBusy={isHostedCheckoutBusy}
           assistantNameError={assistantNameError}
           assistantCalibrationRequired={assistantCalibrationRequired}
           assistantCalibrationComplete={assistantCalibrationComplete}
@@ -379,6 +612,11 @@ export default function App() {
           onSettingsChange={setSettings}
           onSaveSettings={() => void persistSettings(settings)}
           onResetSettings={() => setShowResetDialog(true)}
+          onHostedLogin={handleHostedLogin}
+          onHostedRefresh={refreshHostedAccount}
+          onHostedLogout={handleHostedLogout}
+          onHostedPlanChange={setSelectedHostedPlanKey}
+          onHostedCheckout={handleHostedCheckout}
           onOpenAssistantTraining={() => void openAssistantTrainingDialog()}
         />
 

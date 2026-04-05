@@ -1,4 +1,5 @@
 use crate::{
+    hosted_backend::create_hosted_realtime_session,
     settings::{resolve_openai_api_key, SettingsState},
     voice_profile::{
         build_assistant_instructions, build_voice_agent_profile, build_voice_agent_state,
@@ -17,6 +18,11 @@ pub struct CreateVoiceAgentSessionResult {
     pub profile: VoiceAgentProfile,
     pub assistant_state: VoiceAgentState,
     pub bootstrap_action: String,
+    pub provider_mode: String,
+    pub hosted_session_id: Option<String>,
+    pub provider_session_id: Option<String>,
+    pub hosted_team_slug: Option<String>,
+    pub client_secret_expires_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,15 +38,42 @@ pub fn create_voice_agent_session_command(
     settings: State<'_, SettingsState>,
 ) -> Result<CreateVoiceAgentSessionResult, String> {
     let app_settings = settings.get();
+    let mut profile = build_voice_agent_profile(&app_settings);
+    let mut assistant_state = build_voice_agent_state(&app_settings);
+    let instructions = build_assistant_instructions(&app_settings);
+
+    if app_settings.ai_provider_mode == "hosted" {
+        let hosted_session = create_hosted_realtime_session(
+            &app_settings,
+            instructions,
+            profile.model.clone(),
+            profile.voice.clone(),
+        )?;
+
+        profile.model = hosted_session.model;
+        profile.voice = hosted_session.voice;
+        assistant_state.profile = profile.clone();
+
+        return Ok(CreateVoiceAgentSessionResult {
+            client_secret: hosted_session.client_secret,
+            profile,
+            assistant_state,
+            bootstrap_action: "silent_resume".to_string(),
+            provider_mode: "hosted".to_string(),
+            hosted_session_id: Some(hosted_session.hosted_session_id),
+            provider_session_id: hosted_session.provider_session_id,
+            hosted_team_slug: Some(hosted_session.team.slug),
+            client_secret_expires_at: hosted_session.client_secret_expires_at,
+        });
+    }
+
     let api_key = resolve_openai_api_key(&app_settings)?;
-    let profile = build_voice_agent_profile(&app_settings);
-    let assistant_state = build_voice_agent_state(&app_settings);
 
     let session_payload = json!({
         "session": {
             "type": "realtime",
             "model": profile.model,
-            "instructions": build_assistant_instructions(&app_settings),
+            "instructions": instructions,
             "audio": {
                 "output": {
                     "voice": profile.voice,
@@ -81,6 +114,11 @@ pub fn create_voice_agent_session_command(
         profile,
         assistant_state,
         bootstrap_action: "silent_resume".to_string(),
+        provider_mode: "byo".to_string(),
+        hosted_session_id: None,
+        provider_session_id: None,
+        hosted_team_slug: None,
+        client_secret_expires_at: None,
     })
 }
 

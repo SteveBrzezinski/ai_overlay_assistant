@@ -88,6 +88,11 @@ export const fallbackSettings: AppSettings = {
   translationTargetLanguage: 'en',
   playbackSpeed: 1,
   openaiApiKey: '',
+  aiProviderMode: 'byo',
+  hostedApiBaseUrl: '',
+  hostedAccountEmail: '',
+  hostedAccessToken: '',
+  hostedWorkspaceSlug: '',
   sttLanguage: 'de',
   launchAtLogin: false,
   startHiddenOnLaunch: true,
@@ -107,6 +112,17 @@ export const fallbackSettings: AppSettings = {
   assistantWakeThreshold: DEFAULT_ASSISTANT_WAKE_THRESHOLD,
   assistantCueCooldownMs: DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
 };
+
+export function mergeHostedSettings(target: AppSettings, source: AppSettings): AppSettings {
+  return {
+    ...target,
+    aiProviderMode: source.aiProviderMode,
+    hostedApiBaseUrl: source.hostedApiBaseUrl,
+    hostedAccountEmail: source.hostedAccountEmail,
+    hostedAccessToken: source.hostedAccessToken,
+    hostedWorkspaceSlug: source.hostedWorkspaceSlug,
+  };
+}
 
 export function formatTimestamp(value?: number | null): string {
   if (!value) {

@@ -29,6 +29,11 @@ pub struct AppSettings {
     pub translation_target_language: String,
     pub playback_speed: f32,
     pub openai_api_key: String,
+    pub ai_provider_mode: String,
+    pub hosted_api_base_url: String,
+    pub hosted_account_email: String,
+    pub hosted_access_token: String,
+    pub hosted_workspace_slug: String,
     pub stt_language: String,
     pub launch_at_login: bool,
     pub start_hidden_on_launch: bool,
@@ -55,6 +60,11 @@ impl Default for AppSettings {
             translation_target_language: "en".to_string(),
             playback_speed: DEFAULT_PLAYBACK_SPEED,
             openai_api_key: String::new(),
+            ai_provider_mode: "byo".to_string(),
+            hosted_api_base_url: String::new(),
+            hosted_account_email: String::new(),
+            hosted_access_token: String::new(),
+            hosted_workspace_slug: String::new(),
             stt_language: "de".to_string(),
             launch_at_login: false,
             start_hidden_on_launch: true,
@@ -173,6 +183,11 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
 
     settings.playback_speed = sanitize_playback_speed(settings.playback_speed);
     settings.openai_api_key = settings.openai_api_key.trim().to_string();
+    settings.ai_provider_mode = sanitize_provider_mode(settings.ai_provider_mode);
+    settings.hosted_api_base_url = sanitize_api_base_url(settings.hosted_api_base_url);
+    settings.hosted_account_email = settings.hosted_account_email.trim().to_lowercase();
+    settings.hosted_access_token = settings.hosted_access_token.trim().to_string();
+    settings.hosted_workspace_slug = settings.hosted_workspace_slug.trim().to_lowercase();
     settings.stt_language = if settings.stt_language.trim().is_empty() {
         "de".to_string()
     } else {
@@ -295,6 +310,17 @@ fn sanitize_playback_speed(value: f32) -> f32 {
     }
 
     ((value * 10.0).round() / 10.0).clamp(0.5, 2.0)
+}
+
+fn sanitize_provider_mode(value: String) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "hosted" => "hosted".to_string(),
+        _ => "byo".to_string(),
+    }
+}
+
+fn sanitize_api_base_url(value: String) -> String {
+    value.trim().trim_end_matches('/').to_string()
 }
 
 fn sanitize_assistant_threshold(value: u8) -> u8 {

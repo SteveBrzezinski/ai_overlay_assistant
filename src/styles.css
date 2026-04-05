@@ -378,6 +378,38 @@ h1 {
   gap: 10px;
 }
 
+.settings-auth-panel,
+.settings-auth-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-auth-panel {
+  padding: 16px 18px;
+  border: 1px solid rgba(160, 186, 255, 0.16);
+  border-radius: 16px;
+  background: rgba(10, 16, 31, 0.55);
+}
+
+.settings-auth-summary p,
+.settings-auth-summary strong {
+  margin: 0;
+}
+
+.settings-auth-summary strong {
+  color: #edf4ff;
+}
+
+.settings-auth-summary p {
+  color: #c8d4ee;
+}
+
+.settings-auth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
 .inline-field-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;

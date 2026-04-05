@@ -1,5 +1,6 @@
 pub mod app_icon;
 pub mod background;
+pub mod hosted_backend;
 pub mod hotkey;
 pub mod run_controller;
 pub mod selection_capture;
@@ -248,6 +249,11 @@ pub use commands::{
     capture_and_translate_command, capture_selected_text_command, get_language_options,
     get_settings, pause_resume_current_run, reset_settings, speak_text_command,
     transcribe_chat_audio_command, translate_text_command, update_settings,
+};
+pub use hosted_backend::{
+    create_hosted_checkout_session_command, get_hosted_account_status_command,
+    get_hosted_billing_plans_command, login_hosted_account_command, logout_hosted_account_command,
+    open_external_url_command,
 };
 pub use voice_agent::{create_voice_agent_session_command, run_voice_agent_tool_command};
 pub use voice_memory::{

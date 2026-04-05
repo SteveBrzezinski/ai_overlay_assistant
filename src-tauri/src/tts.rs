@@ -1,4 +1,5 @@
 use crate::{
+    hosted_backend::synthesize_speech_with_hosted_backend,
     run_controller::{is_cancelled_error, RunAccess},
     settings::{resolve_openai_api_key, AppSettings},
 };
@@ -886,7 +887,7 @@ where
                 if chunk.index == 0 { first_chunk_leading_silence_ms } else { 0 };
             let playback_marker = if chunk.index == 0 {
                 Some(PlaybackStartMarker {
-                    mode,
+                    mode: mode.as_str().to_string(),
                     pipeline_started,
                     progress: progress.cloned(),
                     first_audio_playback_started_at_ms,
@@ -1284,7 +1285,7 @@ impl Drop for SinkRegistrationGuard<'_> {
 }
 
 struct PlaybackStartMarker<'a> {
-    mode: TtsMode,
+    mode: String,
     pipeline_started: Instant,
     progress: Option<ProgressCallback>,
     first_audio_playback_started_at_ms: &'a mut Option<u64>,
@@ -1300,7 +1301,7 @@ fn mark_first_audio_playback_started(marker: &mut PlaybackStartMarker<'_>) {
 
     if let Some(progress) = &marker.progress {
         progress(TtsProgress::FirstAudioPlaybackStarted {
-            mode: marker.mode.as_str().to_string(),
+            mode: marker.mode.clone(),
             at_ms,
             latency_ms,
         });
@@ -2863,6 +2864,176 @@ fn system_time_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(millis_u64).unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn speak_text_with_hosted_backend(
+    text: &str,
+    settings: &AppSettings,
+    requested_mode: TtsMode,
+    requested_format: String,
+    explicit_model: Option<String>,
+    voice: String,
+    autoplay: bool,
+    first_chunk_leading_silence_ms: u32,
+    playback_speed: f32,
+    progress: Option<ProgressCallback>,
+    run_access: Option<RunAccess>,
+) -> Result<SpeakTextResult, String> {
+    let started = Instant::now();
+    let started_at_ms = system_time_ms();
+    let output_directory = build_output_directory()?;
+    let output_file = build_chunk_path(&output_directory, 0, &requested_format);
+    let output_file_path = output_file.to_string_lossy().to_string();
+
+    if let Some(run_access) = &run_access {
+        run_access.check_cancelled()?;
+        run_access.update_phase("tts_requesting_audio");
+        run_access.update_chunk_phase("tts_requesting_audio", 1, 1);
+    }
+
+    if let Some(progress_cb) = &progress {
+        progress_cb(TtsProgress::PipelineStarted {
+            mode: "hosted".to_string(),
+            chunk_count: 1,
+            format: requested_format.clone(),
+            transport_format: requested_format.clone(),
+            autoplay,
+            max_parallel_requests: 1,
+            started_at_ms,
+        });
+        progress_cb(TtsProgress::ChunkRequestStarted {
+            index: 0,
+            total: 1,
+            text_chars: text.chars().count(),
+        });
+    }
+
+    let hosted_result = synthesize_speech_with_hosted_backend(
+        settings,
+        text.to_string(),
+        explicit_model,
+        Some(voice.clone()),
+        requested_format.clone(),
+    )?;
+
+    let mut bytes = BASE64_STANDARD
+        .decode(&hosted_result.audio_base64)
+        .map_err(|error| format!("Failed to decode hosted speech response: {error}"))?;
+    let first_audio_received_at_ms = system_time_ms();
+    let first_audio_latency_ms = millis_u64(started.elapsed());
+
+    if let Some(progress_cb) = &progress {
+        progress_cb(TtsProgress::FirstAudioReceived {
+            mode: "hosted".to_string(),
+            at_ms: first_audio_received_at_ms,
+            latency_ms: first_audio_latency_ms,
+            bytes_received: bytes.len(),
+        });
+        progress_cb(TtsProgress::ChunkRequestFinished {
+            index: 0,
+            total: 1,
+            bytes_received: bytes.len(),
+            elapsed_ms: started.elapsed().as_millis(),
+        });
+    }
+
+    let resolved = ResolvedSpeakOptions {
+        voice: hosted_result.voice.clone(),
+        model: hosted_result.model.clone(),
+        mode: TtsMode::Classic,
+        format: hosted_result.format.clone(),
+        transport_format: hosted_result.format.clone(),
+        autoplay,
+        max_chunk_chars: DEFAULT_MAX_CHUNK_CHARS,
+        max_parallel_requests: 1,
+        first_chunk_leading_silence_ms,
+        playback_speed,
+    };
+
+    if let Some(run_access) = &run_access {
+        run_access.check_cancelled()?;
+        run_access.update_phase("tts_writing_chunk");
+        run_access.update_chunk_phase("tts_writing_chunk", 1, 1);
+    }
+
+    bytes = normalize_audio_bytes(bytes, &resolved)?;
+    bytes = maybe_prepend_leading_silence(bytes, &resolved, 0)?;
+    fs::write(&output_file, &bytes)
+        .map_err(|error| format!("Failed to write audio file: {error}"))?;
+
+    if let Some(progress_cb) = &progress {
+        progress_cb(TtsProgress::ChunkFileWritten {
+            index: 0,
+            total: 1,
+            file_path: output_file_path.clone(),
+            bytes_written: bytes.len(),
+            elapsed_ms: started.elapsed().as_millis(),
+        });
+    }
+
+    let mut first_audio_playback_started_at_ms = None;
+    let mut start_latency_ms = Some(millis_u64(started.elapsed()));
+
+    if autoplay {
+        if let Some(run_access) = &run_access {
+            run_access.check_cancelled()?;
+            run_access.update_phase("tts_playback");
+            run_access.update_chunk_phase("tts_playback", 1, 1);
+        }
+
+        if let Some(progress_cb) = &progress {
+            progress_cb(TtsProgress::ChunkPlaybackStarted {
+                index: 0,
+                total: 1,
+                file_path: output_file_path.clone(),
+            });
+        }
+
+        let playback_started = Instant::now();
+        play_audio(
+            &output_file_path,
+            first_chunk_leading_silence_ms,
+            playback_speed,
+            run_access.as_ref(),
+            Some(PlaybackStartMarker {
+                mode: "hosted".to_string(),
+                pipeline_started: started,
+                progress: progress.clone(),
+                first_audio_playback_started_at_ms: &mut first_audio_playback_started_at_ms,
+                start_latency_ms: &mut start_latency_ms,
+            }),
+        )?;
+
+        if let Some(progress_cb) = &progress {
+            progress_cb(TtsProgress::ChunkPlaybackFinished {
+                index: 0,
+                total: 1,
+                elapsed_ms: playback_started.elapsed().as_millis(),
+            });
+        }
+    }
+
+    Ok(SpeakTextResult {
+        file_path: output_file_path,
+        output_directory: output_directory.to_string_lossy().to_string(),
+        bytes_written: bytes.len(),
+        chunk_count: 1,
+        voice: hosted_result.voice,
+        model: hosted_result.model,
+        mode: "hosted".to_string(),
+        requested_mode: requested_mode.as_str().to_string(),
+        session_id: format!("hosted-tts-session-{}", system_time_ms()),
+        session_strategy: "hosted_http_audio_session".to_string(),
+        fallback_reason: None,
+        supports_persistent_session: false,
+        format: hosted_result.format.clone(),
+        transport_format: hosted_result.format,
+        autoplay,
+        first_audio_received_at_ms: Some(first_audio_received_at_ms),
+        first_audio_playback_started_at_ms,
+        start_latency_ms,
+    })
+}
+
 pub fn speak_text(
     options: SpeakTextOptions,
     settings: &AppSettings,
@@ -2889,10 +3060,8 @@ pub fn speak_text_with_progress_and_control(
         return Err("No text provided for speech synthesis".into());
     }
 
-    let api_key = resolve_openai_api_key(settings)?;
     let requested_mode =
         resolve_tts_mode(options.mode.or_else(|| Some(DEFAULT_TTS_MODE.to_string())));
-    let session_plan = build_session_plan(requested_mode);
     let requested_format =
         resolve_format(options.format.or_else(|| Some(DEFAULT_FORMAT.to_string())))?;
     let explicit_model = options.model;
@@ -2902,6 +3071,25 @@ pub fn speak_text_with_progress_and_control(
     let max_parallel_requests = resolve_parallel_requests(options.max_parallel_requests);
     let first_chunk_leading_silence_ms = options.first_chunk_leading_silence_ms.unwrap_or(0);
     let playback_speed = settings.playback_speed;
+
+    if settings.ai_provider_mode == "hosted" {
+        return speak_text_with_hosted_backend(
+            &text,
+            settings,
+            requested_mode,
+            requested_format,
+            explicit_model,
+            voice,
+            autoplay,
+            first_chunk_leading_silence_ms,
+            playback_speed,
+            progress,
+            run_access,
+        );
+    }
+
+    let api_key = resolve_openai_api_key(settings)?;
+    let session_plan = build_session_plan(requested_mode);
 
     let build_resolved =
         |mode: TtsMode, model: String, format: String, transport_format: String| {
