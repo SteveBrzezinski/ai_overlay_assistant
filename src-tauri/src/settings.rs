@@ -12,6 +12,7 @@ pub const DEFAULT_PAUSE_RESUME_HOTKEY: &str = "Ctrl+Shift+P";
 pub const DEFAULT_CANCEL_HOTKEY: &str = "Ctrl+Shift+X";
 pub const SETTINGS_EVENT: &str = "settings-updated";
 pub const CONFIG_FILE_NAME: &str = ".voice-overlay-assistant.config.json";
+const DEFAULT_DESIGN_THEME_ID: &str = "obsidian-halo";
 const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
 const DEFAULT_ASSISTANT_WAKE_THRESHOLD: u8 = 68;
 const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS: u32 = 1200;
@@ -26,6 +27,7 @@ const DEFAULT_VOICE_AGENT_EXTRA_INSTRUCTIONS: &str =
 pub struct AppSettings {
     pub tts_mode: String,
     pub realtime_allow_live_fallback: bool,
+    pub design_theme_id: String,
     pub tts_format: String,
     pub first_chunk_leading_silence_ms: u32,
     pub translation_target_language: String,
@@ -55,6 +57,7 @@ impl Default for AppSettings {
         Self {
             tts_mode: "classic".to_string(),
             realtime_allow_live_fallback: false,
+            design_theme_id: DEFAULT_DESIGN_THEME_ID.to_string(),
             tts_format: "wav".to_string(),
             first_chunk_leading_silence_ms: 180,
             translation_target_language: "en".to_string(),
@@ -168,6 +171,12 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         "live" | "low_latency" | "low-latency" => "live".to_string(),
         "realtime" | "realtime_experimental" | "realtime-experimental" => "realtime".to_string(),
         _ => "classic".to_string(),
+    };
+    settings.design_theme_id = match settings.design_theme_id.trim().to_lowercase().as_str() {
+        "shadow-satin" => "shadow-satin".to_string(),
+        "olympian-marble" => "olympian-marble".to_string(),
+        "retro-signal" => "retro-signal".to_string(),
+        _ => DEFAULT_DESIGN_THEME_ID.to_string(),
     };
     settings.tts_format = match settings.tts_format.trim().to_lowercase().as_str() {
         "mp3" => "mp3".to_string(),

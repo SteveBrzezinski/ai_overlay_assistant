@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { DesignThemeId } from '../designThemes';
 
 export type CaptureOptions = {
   copyDelayMs?: number;
@@ -26,6 +27,7 @@ export type TranslateOptions = {
 export type AppSettings = {
   ttsMode: 'classic' | 'live' | 'realtime';
   realtimeAllowLiveFallback: boolean;
+  designThemeId: DesignThemeId;
   ttsFormat: 'wav' | 'mp3';
   firstChunkLeadingSilenceMs: number;
   translationTargetLanguage: string;
@@ -263,6 +265,7 @@ export type LiveSttControlEvent = {
 
 const HOTKEY_STATUS_EVENT = 'hotkey-status';
 const LIVE_STT_CONTROL_EVENT = 'live-stt-control';
+const SETTINGS_EVENT = 'settings-updated';
 const VOICE_AGENT_TASK_EVENT = 'voice-agent-task';
 
 export async function getAppStatus(): Promise<string> {
@@ -295,6 +298,10 @@ export async function onHotkeyStatus(callback: (status: HotkeyStatus) => void): 
 
 export async function onLiveSttControl(callback: (event: LiveSttControlEvent) => void): Promise<UnlistenFn> {
   return listen<LiveSttControlEvent>(LIVE_STT_CONTROL_EVENT, (event) => callback(event.payload));
+}
+
+export async function onSettingsUpdated(callback: (settings: AppSettings) => void): Promise<UnlistenFn> {
+  return listen<AppSettings>(SETTINGS_EVENT, (event) => callback(event.payload));
 }
 
 export async function onVoiceAgentTask(callback: (event: VoiceTaskEvent) => void): Promise<UnlistenFn> {

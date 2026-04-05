@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Window, getCurrentWindow } from '@tauri-apps/api/window';
+import { applyDesignTheme, DEFAULT_DESIGN_THEME_ID } from './designThemes';
 import SettingsView from './SettingsView';
 
  type RunHistoryEntry = {
@@ -108,6 +109,7 @@ function defaultVoiceAgentExtraInstructions(): string {
 const fallbackSettings: AppSettings = {
   ttsMode: 'classic',
   realtimeAllowLiveFallback: false,
+  designThemeId: DEFAULT_DESIGN_THEME_ID,
   launchAtLogin: false,
   startHiddenOnLaunch: true,
   ttsFormat: 'wav',
@@ -353,6 +355,8 @@ export default function App() {
   const [voiceTaskFeed, setVoiceTaskFeed] = useState<VoiceFeedItem[]>([]);
   const [activeView, setActiveView] = useState<AppView>('dashboard');
   const [initialStateLoaded, setInitialStateLoaded] = useState(false);
+  const [isMainWindowMaximized, setIsMainWindowMaximized] = useState(false);
+  const appWindowRef = useRef(getCurrentWindow());
   const liveSttControllerRef = useRef<LiveSttController | null>(null);
   const assistantActiveRef = useRef(false);
   const composerVisibleRef = useRef(false);
@@ -368,6 +372,33 @@ export default function App() {
   const realtimeVoiceAgentRef = useRef<RealtimeVoiceAgentController | null>(null);
   const hasAutoStartedLiveRef = useRef(false);
   const lastHandledVoiceCommandRef = useRef<{ command: VoiceOverlayCommand; text: string; handledAtMs: number } | null>(null);
+
+  async function syncMainWindowMaximized(): Promise<void> {
+    try {
+      setIsMainWindowMaximized(await appWindowRef.current.isMaximized());
+    } catch {
+      // Window state sync is best-effort for the custom titlebar.
+    }
+  }
+
+  useEffect(() => {
+    void applyDesignTheme(settings.designThemeId, appWindowRef.current);
+  }, [settings.designThemeId]);
+
+  useEffect(() => {
+    let unlistenResize: (() => void | Promise<void>) | undefined;
+
+    void syncMainWindowMaximized();
+    void appWindowRef.current.onResized(() => {
+      void syncMainWindowMaximized();
+    }).then((cleanup) => {
+      unlistenResize = cleanup;
+    });
+
+    return () => {
+      void unlistenResize?.();
+    };
+  }, []);
 
   useEffect(() => {
     void Promise.all([getAppStatus(), getHotkeyStatus(), getSettings(), getLanguageOptions()])
@@ -1415,9 +1446,78 @@ export default function App() {
     uiState,
   ]);
 
+  const handleWindowMinimize = async (): Promise<void> => {
+    await appWindowRef.current.minimize();
+  };
+
+  const handleWindowMaximizeToggle = async (): Promise<void> => {
+    await appWindowRef.current.toggleMaximize();
+    await syncMainWindowMaximized();
+  };
+
+  const handleWindowClose = async (): Promise<void> => {
+    try {
+      await appWindowRef.current.close();
+    } catch {
+      await appWindowRef.current.hide();
+    }
+  };
+
   return (
     <>
-      <main className="app-shell">
+      <div className={`app-frame ${isMainWindowMaximized ? 'app-frame--maximized' : ''}`}>
+        <header className="window-titlebar">
+          <div
+            className="window-titlebar__drag"
+            data-tauri-drag-region
+            onDoubleClick={() => void handleWindowMaximizeToggle()}
+          >
+            <span className="window-titlebar__mark" aria-hidden="true" />
+            <span className="window-titlebar__title">Voice Overlay Assistant</span>
+          </div>
+          <div className="window-titlebar__controls" aria-label="Window controls">
+            <button
+              type="button"
+              className="window-titlebar__control"
+              aria-label="Minimize window"
+              onClick={() => void handleWindowMinimize()}
+            >
+              <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <path d="M2 9.2h8" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="window-titlebar__control"
+              aria-label={isMainWindowMaximized ? 'Restore window' : 'Maximize window'}
+              onClick={() => void handleWindowMaximizeToggle()}
+            >
+              <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+                {isMainWindowMaximized ? (
+                  <>
+                    <path d="M3 4.2h5.2V9.4H3z" />
+                    <path d="M4.8 2.6H10v5.2" />
+                  </>
+                ) : (
+                  <path d="M2.6 2.6h6.8v6.8H2.6z" />
+                )}
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="window-titlebar__control window-titlebar__control--close"
+              aria-label="Hide window"
+              onClick={() => void handleWindowClose()}
+            >
+              <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <path d="M2.5 2.5l7 7" />
+                <path d="M9.5 2.5l-7 7" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <main className="app-shell">
         {activeView === 'dashboard' ? (
           <>
             <section className="hero-card">
@@ -1690,7 +1790,8 @@ export default function App() {
         </section>
           </>
         ) : null}
-      </main>
+        </main>
+      </div>
 
       {showAssistantTrainingDialog && currentAssistantTrainingStep ? (
         <div className="modal-backdrop" role="presentation" onClick={closeAssistantTrainingDialog}>

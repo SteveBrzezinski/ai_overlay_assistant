@@ -16,12 +16,12 @@ pub mod voice_tools;
 mod commands {
     use super::run_controller::{CancelResult, PauseResumeResult, RunController};
     use super::selection_capture::{capture_selected_text, CaptureOptions, CaptureResult};
-    use super::settings::{AppSettings, LanguageOption, SettingsState, LANGUAGE_OPTIONS};
+    use super::settings::{AppSettings, LanguageOption, SettingsState, SETTINGS_EVENT, LANGUAGE_OPTIONS};
     use super::stt::{append_stt_debug_log, AppendSttDebugLogOptions, AppendSttDebugLogResult};
     use super::translation::{translate_text, TranslateTextOptions, TranslateTextResult};
     use super::tts::{speak_text, SpeakTextOptions, SpeakTextResult};
     use serde::Serialize;
-    use tauri::State;
+    use tauri::{AppHandle, Emitter, State};
 
     #[tauri::command]
     pub fn pause_resume_current_run(controller: State<'_, RunController>) -> Result<String, String> {
@@ -64,12 +64,22 @@ mod commands {
     pub fn get_settings(settings: State<'_, SettingsState>) -> AppSettings { settings.get() }
 
     #[tauri::command]
-    pub fn update_settings(next: AppSettings, settings: State<'_, SettingsState>) -> Result<AppSettings, String> {
-        settings.update(next)
+    pub fn update_settings(
+        next: AppSettings,
+        settings: State<'_, SettingsState>,
+        app: AppHandle,
+    ) -> Result<AppSettings, String> {
+        let saved = settings.update(next)?;
+        let _ = app.emit(SETTINGS_EVENT, &saved);
+        Ok(saved)
     }
 
     #[tauri::command]
-    pub fn reset_settings(settings: State<'_, SettingsState>) -> Result<AppSettings, String> { settings.reset() }
+    pub fn reset_settings(settings: State<'_, SettingsState>, app: AppHandle) -> Result<AppSettings, String> {
+        let saved = settings.reset()?;
+        let _ = app.emit(SETTINGS_EVENT, &saved);
+        Ok(saved)
+    }
 
     #[tauri::command]
     pub fn get_language_options() -> Vec<LanguageOption> { LANGUAGE_OPTIONS.to_vec() }

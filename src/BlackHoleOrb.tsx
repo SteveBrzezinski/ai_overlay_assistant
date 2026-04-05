@@ -71,45 +71,45 @@ export default function BlackHoleOrb({
         <svg className="black-hole-svg" viewBox="0 0 240 240" aria-hidden="true">
           <defs>
             <radialGradient id={outerGlowId} cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="rgba(33, 54, 92, 0)" />
-              <stop offset="58%" stopColor="rgba(19, 31, 55, 0.08)" />
-              <stop offset="82%" stopColor="rgba(10, 18, 34, 0.22)" />
-              <stop offset="100%" stopColor="rgba(4, 8, 18, 0)" />
+              <stop offset="0%" stopColor="var(--orb-stop-outer-1)" />
+              <stop offset="58%" stopColor="var(--orb-stop-outer-2)" />
+              <stop offset="82%" stopColor="var(--orb-stop-outer-3)" />
+              <stop offset="100%" stopColor="var(--orb-stop-outer-4)" />
             </radialGradient>
 
             <radialGradient id={accretionGradientId} cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="rgba(109, 169, 255, 0)" />
-              <stop offset="46%" stopColor="rgba(69, 117, 205, 0.08)" />
-              <stop offset="74%" stopColor="rgba(52, 93, 176, 0.2)" />
-              <stop offset="100%" stopColor="rgba(29, 55, 118, 0)" />
+              <stop offset="0%" stopColor="var(--orb-stop-disk-1)" />
+              <stop offset="46%" stopColor="var(--orb-stop-disk-2)" />
+              <stop offset="74%" stopColor="var(--orb-stop-disk-3)" />
+              <stop offset="100%" stopColor="var(--orb-stop-disk-4)" />
             </radialGradient>
 
             <linearGradient id={accretionRingId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="rgba(76, 110, 180, 0.02)" />
-              <stop offset="18%" stopColor="rgba(84, 129, 215, 0.18)" />
-              <stop offset="46%" stopColor="rgba(154, 208, 255, 0.92)" />
-              <stop offset="72%" stopColor="rgba(83, 136, 221, 0.22)" />
-              <stop offset="100%" stopColor="rgba(24, 42, 88, 0.04)" />
+              <stop offset="0%" stopColor="var(--orb-ring-main-start)" />
+              <stop offset="18%" stopColor="var(--orb-ring-main-mid-a)" />
+              <stop offset="46%" stopColor="var(--orb-ring-main-mid-b)" />
+              <stop offset="72%" stopColor="var(--orb-ring-main-mid-c)" />
+              <stop offset="100%" stopColor="var(--orb-ring-main-end)" />
             </linearGradient>
 
             <linearGradient id={accretionRingGlowId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="rgba(58, 92, 161, 0)" />
-              <stop offset="40%" stopColor="rgba(87, 160, 255, 0.34)" />
-              <stop offset="52%" stopColor="rgba(195, 228, 255, 0.84)" />
-              <stop offset="70%" stopColor="rgba(67, 120, 214, 0.28)" />
-              <stop offset="100%" stopColor="rgba(58, 92, 161, 0)" />
+              <stop offset="0%" stopColor="var(--orb-ring-glow-start)" />
+              <stop offset="40%" stopColor="var(--orb-ring-glow-mid-a)" />
+              <stop offset="52%" stopColor="var(--orb-ring-glow-mid-b)" />
+              <stop offset="70%" stopColor="var(--orb-ring-glow-mid-c)" />
+              <stop offset="100%" stopColor="var(--orb-ring-glow-end)" />
             </linearGradient>
 
             <radialGradient id={coreGlowId} cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="rgba(7, 10, 18, 0)" />
-              <stop offset="62%" stopColor="rgba(12, 19, 31, 0.08)" />
-              <stop offset="100%" stopColor="rgba(100, 170, 255, 0.3)" />
+              <stop offset="0%" stopColor="var(--orb-core-stop-1)" />
+              <stop offset="62%" stopColor="var(--orb-core-stop-2)" />
+              <stop offset="100%" stopColor="var(--orb-core-stop-3)" />
             </radialGradient>
 
             <linearGradient id={rimGradientId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="rgba(130, 199, 255, 0.08)" />
-              <stop offset="46%" stopColor="rgba(126, 198, 255, 0.72)" />
-              <stop offset="100%" stopColor="rgba(39, 75, 155, 0.22)" />
+              <stop offset="0%" stopColor="var(--orb-rim-start)" />
+              <stop offset="46%" stopColor="var(--orb-rim-mid)" />
+              <stop offset="100%" stopColor="var(--orb-rim-end)" />
             </linearGradient>
 
             <filter id={blurFilterId} x="-40%" y="-40%" width="180%" height="180%">

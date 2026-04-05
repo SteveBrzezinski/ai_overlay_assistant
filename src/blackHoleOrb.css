@@ -59,7 +59,7 @@
 }
 
 .black-hole-star {
-  fill: rgba(194, 228, 255, 0.92);
+  fill: var(--orb-star);
   animation: black-hole-star-twinkle 3.4s ease-in-out infinite;
 }
 
@@ -129,27 +129,27 @@
 }
 
 .ring-stroke--outer {
-  stroke: rgba(124, 184, 255, 0.34);
+  stroke: var(--orb-ring-stroke-outer);
   stroke-width: 2.4;
 }
 
 .ring-stroke--outer-glow {
-  stroke: rgba(68, 136, 241, 0.18);
+  stroke: var(--orb-ring-stroke-outer-glow);
   stroke-width: 5.4;
 }
 
 .ring-stroke--middle {
-  stroke: rgba(138, 201, 255, 0.56);
+  stroke: var(--orb-ring-stroke-middle);
   stroke-width: 2.2;
 }
 
 .ring-stroke--middle-soft {
-  stroke: rgba(47, 105, 212, 0.32);
+  stroke: var(--orb-ring-stroke-middle-soft);
   stroke-width: 4.8;
 }
 
 .ring-stroke--inner {
-  stroke: rgba(186, 227, 255, 0.72);
+  stroke: var(--orb-ring-stroke-inner);
   stroke-width: 2;
 }
 
@@ -160,11 +160,11 @@
 }
 
 .event-arc--a {
-  stroke: rgba(174, 223, 255, 0.76);
+  stroke: var(--orb-event-a);
 }
 
 .event-arc--b {
-  stroke: rgba(83, 147, 255, 0.62);
+  stroke: var(--orb-event-b);
 }
 
 .accretion-ring {
@@ -212,18 +212,18 @@
 }
 
 .core-shadow {
-  fill: rgba(4, 6, 12, 0.76);
+  fill: var(--orb-core-shadow);
 }
 
 .core {
-  fill: rgba(1, 2, 5, 0.88);
+  fill: var(--orb-core-fill);
 }
 
 .black-hole-ripple {
   position: absolute;
   inset: 24px;
   border-radius: 50%;
-  border: 1px solid rgba(137, 202, 255, 0.12);
+  border: 1px solid var(--orb-ripple);
   opacity: 0;
   transform: scale(0.92);
 }

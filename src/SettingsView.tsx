@@ -1,4 +1,5 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { DESIGN_THEME_OPTIONS, getDesignThemeLabel, normalizeDesignThemeId } from './designThemes';
 import type { AppSettings, LanguageOption } from './lib/voiceOverlay';
 import {
   ASSISTANT_CUE_COOLDOWN_MS_MAX,
@@ -6,7 +7,7 @@ import {
   ASSISTANT_MATCH_THRESHOLD_MIN,
 } from './lib/liveStt';
 
-type SettingsSectionId = 'audio' | 'translation' | 'assistant' | 'startup' | 'advanced';
+type SettingsSectionId = 'design' | 'audio' | 'translation' | 'assistant' | 'startup' | 'advanced';
 
 type SettingsViewProps = {
   settings: AppSettings;
@@ -68,6 +69,10 @@ export default function SettingsView({
       ?? settings.translationTargetLanguage.toUpperCase(),
     [languageOptions, settings.translationTargetLanguage],
   );
+  const selectedThemeLabel = useMemo(
+    () => getDesignThemeLabel(settings.designThemeId),
+    [settings.designThemeId],
+  );
 
   const settingsSections = useMemo<SettingsSection[]>(() => {
     const assistantLabel = settings.assistantName.trim() || 'Ava';
@@ -79,6 +84,12 @@ export default function SettingsView({
         : `${assistantLabel} / ${assistantLanguage}`;
 
     return [
+      {
+        id: 'design',
+        label: 'Design',
+        description: 'Visual themes for the main window, the settings view, and the overlays.',
+        summary: selectedThemeLabel,
+      },
       {
         id: 'audio',
         label: 'Audio & playback',
@@ -118,6 +129,7 @@ export default function SettingsView({
     assistantTrainingReadyName,
     languageOptions,
     settings.assistantName,
+    settings.designThemeId,
     settings.launchAtLogin,
     settings.openaiApiKey,
     settings.playbackSpeed,
@@ -127,6 +139,7 @@ export default function SettingsView({
     settings.translationTargetLanguage,
     settings.ttsFormat,
     settings.ttsMode,
+    selectedThemeLabel,
     translationTargetLabel,
   ]);
 
@@ -199,6 +212,53 @@ export default function SettingsView({
               <span className="field-note">0.5x is slower, 1.0x is default, 2.0x is faster. This still applies to read-aloud and translate+read output.</span>
             </label>
           </div>
+        </div>
+      );
+    }
+
+    if (activeSection === 'design') {
+      const selectedThemeId = normalizeDesignThemeId(settings.designThemeId);
+
+      return (
+        <div className="settings-detail-stack">
+          <div className="settings-panel-header">
+            <div>
+              <span className="settings-panel-eyebrow">Design</span>
+              <h2>Design</h2>
+              <p className="settings-helper">Choose the visual language for the dashboard, settings screen, action bar, composer, and voice orb.</p>
+            </div>
+            <button type="button" className="settings-link-button" onClick={() => setActiveSection(null)}>Show categories</button>
+          </div>
+          <div className="design-grid">
+            {DESIGN_THEME_OPTIONS.map((theme) => {
+              const isActive = selectedThemeId === theme.id;
+              return (
+                <button
+                  type="button"
+                  key={theme.id}
+                  data-preview-theme={theme.id}
+                  className={`design-card ${isActive ? 'design-card--active' : ''}`}
+                  onClick={() => setSettings({ ...settings, designThemeId: theme.id })}
+                >
+                  <div className="design-card__preview" aria-hidden="true">
+                    <span className="design-card__preview-window" />
+                    <span className="design-card__preview-rail" />
+                    <span className="design-card__preview-panel" />
+                    <span className="design-card__preview-orb">
+                      <span className="design-card__preview-ring design-card__preview-ring--outer" />
+                      <span className="design-card__preview-ring design-card__preview-ring--middle" />
+                      <span className="design-card__preview-core" />
+                    </span>
+                  </div>
+                  <span className="design-card__eyebrow">{theme.accent}</span>
+                  <strong className="design-card__title">{theme.label}</strong>
+                  <p className="design-card__description">{theme.description}</p>
+                  <span className="design-card__meta">{isActive ? 'Selected for preview' : theme.contrast}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="field-note">The main window previews your selection immediately. Save the settings to push the design to the action bar, the orb overlay, and future launches.</p>
         </div>
       );
     }

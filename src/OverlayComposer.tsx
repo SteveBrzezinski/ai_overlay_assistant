@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { LogicalPosition, LogicalSize, currentMonitor, getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window';
+import { DEFAULT_DESIGN_THEME_ID } from './designThemes';
 import { OVERLAY_ACTION_EVENT, OVERLAY_STATE_EVENT, type OverlayAction, type OverlayState } from './lib/overlayBridge';
 import { getSettings, speakText, type AppSettings } from './lib/voiceOverlay';
 
@@ -16,6 +17,7 @@ const COMPOSER_GAP = 12;
 const fallbackSettings: AppSettings = {
   ttsMode: 'classic',
   realtimeAllowLiveFallback: false,
+  designThemeId: DEFAULT_DESIGN_THEME_ID,
   launchAtLogin: false,
   startHiddenOnLaunch: true,
   ttsFormat: 'wav',

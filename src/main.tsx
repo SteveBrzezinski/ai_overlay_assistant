@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import App from './App';
+import { applyDesignTheme, DEFAULT_DESIGN_THEME_ID } from './designThemes';
 import OverlayDock from './OverlayDock';
 import OverlayComposer from './OverlayComposer';
 import VoiceOrbOverlay from './VoiceOrbOverlay';
+import { getSettings, onSettingsUpdated } from './lib/voiceOverlay';
 import './styles.css';
 
 function WindowRoot() {
@@ -37,6 +39,24 @@ function WindowRoot() {
       if (retryTimer !== null) {
         window.clearTimeout(retryTimer);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlistenSettings: (() => void | Promise<void>) | undefined;
+
+    void getSettings()
+      .then((settings) => applyDesignTheme(settings.designThemeId))
+      .catch(() => applyDesignTheme(DEFAULT_DESIGN_THEME_ID));
+
+    void onSettingsUpdated((settings) => {
+      void applyDesignTheme(settings.designThemeId);
+    }).then((cleanup) => {
+      unlistenSettings = cleanup;
+    });
+
+    return () => {
+      void unlistenSettings?.();
     };
   }, []);
 
