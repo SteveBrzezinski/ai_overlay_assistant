@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Window, getCurrentWindow } from '@tauri-apps/api/window';
+import SettingsView from './SettingsView';
 
  type RunHistoryEntry = {
   id: string;
@@ -44,9 +45,6 @@ import {
   type OverlayState,
 } from './lib/overlayBridge';
 import {
-  ASSISTANT_CUE_COOLDOWN_MS_MAX,
-  ASSISTANT_MATCH_THRESHOLD_MAX,
-  ASSISTANT_MATCH_THRESHOLD_MIN,
   DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
   DEFAULT_ASSISTANT_WAKE_THRESHOLD,
   LiveSttController,
@@ -64,6 +62,7 @@ type UiState = 'idle' | 'working' | 'success' | 'error';
 type ProviderSnapshotMap = Partial<Record<SttProviderId, ProviderSnapshot>>;
 type CalibrationTarget = 'wake' | 'name';
 type VoiceOverlayCommand = 'open-chat' | 'open-settings';
+type AppView = 'dashboard' | 'settings';
 type CalibrationStep = {
   id: string;
   target: CalibrationTarget;
@@ -284,15 +283,6 @@ function mapRecognitionLanguage(language: string): string {
   }
 }
 
-function parseBoundedInteger(value: string, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.min(max, Math.max(min, Math.round(parsed)));
-}
-
 function prependFeedItem(current: VoiceFeedItem[], item: VoiceFeedItem): VoiceFeedItem[] {
   return [item, ...current].slice(0, 40);
 }
@@ -361,6 +351,7 @@ export default function App() {
   const [voiceAgentSession, setVoiceAgentSession] = useState<CreateVoiceAgentSessionResult | null>(null);
   const [voiceEventFeed, setVoiceEventFeed] = useState<VoiceFeedItem[]>([]);
   const [voiceTaskFeed, setVoiceTaskFeed] = useState<VoiceFeedItem[]>([]);
+  const [activeView, setActiveView] = useState<AppView>('dashboard');
   const [initialStateLoaded, setInitialStateLoaded] = useState(false);
   const liveSttControllerRef = useRef<LiveSttController | null>(null);
   const assistantActiveRef = useRef(false);
@@ -677,13 +668,15 @@ export default function App() {
   };
 
   const openSettingsWindow = async (): Promise<void> => {
-    if (!settingsTransitionRef.current) {
-      const mainWindow = await Window.getByLabel('main');
-      settingsVisibleRef.current = Boolean(mainWindow && await mainWindow.isVisible());
+    const mainWindow = await Window.getByLabel('main');
+    if (!mainWindow) {
+      throw new Error('The main dashboard window is not available right now.');
     }
 
-    settingsVisibleRef.current = !settingsVisibleRef.current;
+    setActiveView('settings');
+    settingsVisibleRef.current = true;
     await processSettingsWindowTransition();
+    await mainWindow.setFocus();
   };
 
   const processComposerWindowTransition = async (): Promise<void> => {
@@ -810,7 +803,7 @@ export default function App() {
 
     if (command === 'open-settings') {
       await openSettingsWindow();
-      setMessage('Voice command recognised: opened settings.');
+      setMessage('Voice command recognised: opened the settings page.');
       return true;
     }
 
@@ -1425,339 +1418,105 @@ export default function App() {
   return (
     <>
       <main className="app-shell">
-        <section className="hero-card">
-          <div className="status-row">
-            <span className="status-dot" aria-hidden="true" />
-            <span className="status-text">{hotkeyStatus.registered ? 'Global hotkeys active' : 'Checking global hotkeys'}</span>
-          </div>
-          <h1>Voice Overlay Assistant</h1>
-          <p className="hero-copy">
-            Two existing flows share one stable base: <strong>{hotkeyStatus.accelerator}</strong> reads selected text aloud,
-            <strong> {hotkeyStatus.translateAccelerator}</strong> captures selected text, translates it, and keeps the result visible in the UI.
-          </p>
-          <div className="actions">
-            <button
-              type="button"
-              className="primary-button"
-              disabled={uiState === 'working' || isSavingSettings}
-              onClick={() => void runReadSelectedText()}
-            >
-              {uiState === 'working' ? 'Working...' : 'Local speech test'}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={uiState === 'working' || isSavingSettings}
-              onClick={() => void runTranslateSelectedText()}
-            >
-              Local translation test
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={isSavingSettings}
-              onClick={() => void (isLiveTranscribing ? stopLiveTranscription() : startLiveTranscription())}
-            >
-              {isLiveTranscribing ? 'Stop live transcription' : 'Start live transcription'}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={isSavingSettings || assistantActive || voiceAgentState === 'connecting'}
-              onClick={() => void activateAssistantVoice('manual')}
-            >
-              Activate assistant
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={isSavingSettings || !assistantActive}
-              onClick={() => void deactivateAssistantVoice('manual')}
-            >
-              Deactivate assistant
-            </button>
-          </div>
-        </section>
-
-        <section className="panel-grid" aria-label="Project status">
-          {readinessItems.map((item) => (
-            <article className="info-card" key={item.label}>
-              <span className="info-label">{item.label}</span>
-              <strong>{item.value}</strong>
-            </article>
-          ))}
-        </section>
-
-        <section className="settings-card">
-          <div className="settings-header">
-            <div>
-              <h2>Settings</h2>
-              <p className="settings-helper">
-                Save applies changes to future hotkey runs and stores them in the local config file.
-              </p>
-            </div>
-            <div className="settings-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={!hasUnsavedChanges || isSavingSettings || uiState === 'working' || !canSaveSettings}
-                onClick={() => void persistSettings(settings)}
-              >
-                {isSavingSettings ? 'Saving...' : 'Save settings'}
-              </button>
-              <button
-                type="button"
-                className="danger-button"
-                disabled={isSavingSettings || uiState === 'working'}
-                onClick={() => setShowResetDialog(true)}
-              >
-                Reset to defaults
-              </button>
-            </div>
-          </div>
-
-          <div className="settings-grid">
-            <label className="settings-field">
-              <span className="info-label">Speech mode</span>
-              <select value={settings.ttsMode} onChange={(event) => setSettings({ ...settings, ttsMode: event.target.value as AppSettings['ttsMode'] })}>
-                <option value="classic">Classic / stable</option>
-                <option value="live">Live / session-ready streaming</option>
-                <option value="realtime">Realtime / experimental</option>
-              </select>
-              <span className="field-note">Classic keeps the chunked file pipeline. Live uses the newer session-oriented streaming path. Realtime uses the OpenAI Realtime WebSocket audio path directly and now exposes its own startup errors by default.</span>
-            </label>
-
-            <label className="settings-field settings-field--wide">
-              <span className="info-label">Realtime debug fallback</span>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.realtimeAllowLiveFallback}
-                  onChange={(event) => setSettings({ ...settings, realtimeAllowLiveFallback: event.target.checked })}
-                />
-                <span>Allow temporary fallback from realtime to live on startup failure</span>
-              </label>
-              <span className="field-note">Default is off so real Realtime connect/session.update/response.create/audio errors stay visible. Turn this on only if you explicitly want the old rescue path while debugging.</span>
-            </label>
-
-            <label className="settings-field settings-field--wide">
-              <span className="info-label">Background startup</span>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.launchAtLogin}
-                  onChange={(event) => setSettings({ ...settings, launchAtLogin: event.target.checked })}
-                />
-                <span>Start Voice Overlay Assistant automatically with Windows</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.startHiddenOnLaunch}
-                  disabled={!settings.launchAtLogin}
-                  onChange={(event) => setSettings({ ...settings, startHiddenOnLaunch: event.target.checked })}
-                />
-                <span>When started automatically, keep the window hidden and run in the background</span>
-              </label>
-              <span className="field-note">Saving this writes or removes a Windows Startup launcher for the current executable. Closing the main window now keeps the assistant alive in the tray so hotkeys and live listening can continue.</span>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">Audio format</span>
-              <select value={settings.ttsFormat} onChange={(event) => setSettings({ ...settings, ttsFormat: event.target.value as AppSettings['ttsFormat'] })}>
-                <option value="wav">WAV (Default)</option>
-                <option value="mp3">MP3</option>
-              </select>
-              <span className="field-note">This applies to the classic pipeline. Live and realtime stream PCM internally and store the finished file as WAV.</span>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">First chunk lead-in</span>
-              <select value={String(settings.firstChunkLeadingSilenceMs)} onChange={(event) => setSettings({ ...settings, firstChunkLeadingSilenceMs: Number(event.target.value) })}>
-                {[0, 120, 180, 250, 320].map((value) => <option key={value} value={value}>{value} ms</option>)}
-              </select>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">Translation target language</span>
-              <select value={settings.translationTargetLanguage} onChange={(event) => setSettings({ ...settings, translationTargetLanguage: event.target.value })}>
-                {languageOptions.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
-              </select>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">Read / translate engine</span>
-              <input type="text" value="live / fixed" readOnly />
-              <span className="field-note">Read aloud and translate-plus-read now always use the live TTS path in the background. There is no switchable speech mode anymore.</span>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">Voice assistant transport</span>
-              <input type="text" value="WebRTC realtime" readOnly />
-              <span className="field-note">The assistant&apos;s spoken conversation runs separately through OpenAI Realtime over WebRTC.</span>
-            </label>
-
-            <label className="settings-field settings-field--wide">
-              <span className="info-label">Speech playback speed</span>
-              <div className="slider-row">
-                <input
-                  type="range"
-                  min="0.5"
-                  max="2"
-                  step="0.1"
-                  value={settings.playbackSpeed}
-                  onChange={(event) => setSettings({ ...settings, playbackSpeed: Number(event.target.value) })}
-                />
-                <output>{settings.playbackSpeed.toFixed(1)}x</output>
-              </div>
-              <span className="field-note">0.5x is slower, 1.0x is default, 2.0x is faster. This still applies to read-aloud and translate+read output.</span>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">STT provider</span>
-              <input type="text" value="WebView2 / Windows speech" readOnly />
-              <span className="field-note">The live transcription path stays on WebView2 only to keep local overhead and lag as low as possible.</span>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">Assistant name</span>
-              <div className="inline-field-row">
-                <input
-                  type="text"
-                  placeholder="Ava"
-                  value={settings.assistantName}
-                  onChange={(event) => {
-                    const nextName = event.target.value;
-                    setSettings({
-                      ...settings,
-                      assistantName: nextName,
-                      assistantWakeSamples: [],
-                      assistantNameSamples: [],
-                      assistantSampleLanguage: normalizeLanguageCode(settings.sttLanguage),
-                    });
-                    setAssistantTrainingReadyName(null);
-                  }}
-                />
-                <button
-                  type="button"
-                  className="secondary-button secondary-button--icon"
-                  disabled={Boolean(assistantNameError) || isSavingSettings}
-                  onClick={() => void openAssistantTrainingDialog()}
-                  title="Train wake phrase"
-                >
-                  Activate
+        {activeView === 'dashboard' ? (
+          <>
+            <section className="hero-card">
+              <div className="hero-toolbar">
+                <div className="status-row">
+                  <span className="status-dot" aria-hidden="true" />
+                  <span className="status-text">{hotkeyStatus.registered ? 'Global hotkeys active' : 'Checking global hotkeys'}</span>
+                </div>
+                <button type="button" className="toolbar-button" onClick={() => void openSettingsWindow()}>
+                  <span className="toolbar-button__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="3" />
+                      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.82-.34 1.7 1.7 0 0 0-1 1.52V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.52 1.7 1.7 0 0 0-1.82.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.82 1.7 1.7 0 0 0-1.52-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.52-1 1.7 1.7 0 0 0-.34-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.82.34h.01a1.7 1.7 0 0 0 .99-1.52V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 .99 1.52h.01a1.7 1.7 0 0 0 1.82-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.82v.01a1.7 1.7 0 0 0 1.52.99H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.52.99z" />
+                    </svg>
+                  </span>
+                  <span className="toolbar-button__label">Settings</span>
                 </button>
               </div>
-              {assistantNameError ? <span className="field-note field-note--error">{assistantNameError}</span> : null}
-              {!assistantNameError && assistantCalibrationRequired && !assistantCalibrationComplete ? (
-                <span className="field-note field-note--warning">Wake-word training is optional right now. You can save immediately, but training still improves matching.</span>
-              ) : null}
-              {!assistantNameError && assistantCalibrationComplete && assistantTrainingReadyName === settings.assistantName ? (
-                <span className="field-note field-note--success">Wake-word calibration is ready for this name and language.</span>
-              ) : null}
-              <span className="field-note">Use 3-8 characters, one single word. The wake phrase stays in English: <code>Hey {settings.assistantName || 'Ava'}</code> activates the assistant.</span>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">Active transcription language</span>
-              <input
-                type="text"
-                placeholder="de"
-                value={settings.sttLanguage}
-                onChange={(event) => {
-                  setSettings({
-                    ...settings,
-                    sttLanguage: event.target.value,
-                    assistantWakeSamples: [],
-                    assistantNameSamples: [],
-                    assistantSampleLanguage: normalizeLanguageCode(event.target.value),
-                  });
-                  setAssistantTrainingReadyName(null);
-                }}
-              />
-              <span className="field-note">This language is now also used while training and listening for the wake phrase. If you change it, you need to record the training samples again, e.g. <code>de</code> or <code>en</code>.</span>
-            </label>
-
-            <label className="settings-field">
-              <span className="info-label">Wake match threshold</span>
-              <div className="slider-row">
-                <input
-                  type="range"
-                  min={ASSISTANT_MATCH_THRESHOLD_MIN}
-                  max={ASSISTANT_MATCH_THRESHOLD_MAX}
-                  step="1"
-                  value={settings.assistantWakeThreshold}
-                  onChange={(event) => setSettings({
-                    ...settings,
-                    assistantWakeThreshold: parseBoundedInteger(
-                      event.target.value,
-                      settings.assistantWakeThreshold,
-                      ASSISTANT_MATCH_THRESHOLD_MIN,
-                      ASSISTANT_MATCH_THRESHOLD_MAX,
-                    ),
-                  })}
-                />
-                <output>{settings.assistantWakeThreshold}</output>
+              <h1>Voice Overlay Assistant</h1>
+              <p className="hero-copy">
+                Two existing flows share one stable base: <strong>{hotkeyStatus.accelerator}</strong> reads selected text aloud,
+                <strong> {hotkeyStatus.translateAccelerator}</strong> captures selected text, translates it, and keeps the result visible in the UI.
+              </p>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={uiState === 'working' || isSavingSettings}
+                  onClick={() => void runReadSelectedText()}
+                >
+                  {uiState === 'working' ? 'Working...' : 'Local speech test'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={uiState === 'working' || isSavingSettings}
+                  onClick={() => void runTranslateSelectedText()}
+                >
+                  Local translation test
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isSavingSettings}
+                  onClick={() => void (isLiveTranscribing ? stopLiveTranscription() : startLiveTranscription())}
+                >
+                  {isLiveTranscribing ? 'Stop live transcription' : 'Start live transcription'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isSavingSettings || assistantActive || voiceAgentState === 'connecting'}
+                  onClick={() => void activateAssistantVoice('manual')}
+                >
+                  Activate assistant
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isSavingSettings || !assistantActive}
+                  onClick={() => void deactivateAssistantVoice('manual')}
+                >
+                  Deactivate assistant
+                </button>
               </div>
-              <span className="field-note">Higher is stricter. Recognition status shows the live wake score against this threshold.</span>
-            </label>
+            </section>
 
-            <label className="settings-field">
-              <span className="info-label">Cue cooldown</span>
-              <input
-                type="number"
-                min="0"
-                max={ASSISTANT_CUE_COOLDOWN_MS_MAX}
-                step="100"
-                value={settings.assistantCueCooldownMs}
-                onChange={(event) => setSettings({
-                  ...settings,
-                  assistantCueCooldownMs: parseBoundedInteger(
-                    event.target.value,
-                    settings.assistantCueCooldownMs,
-                    0,
-                    ASSISTANT_CUE_COOLDOWN_MS_MAX,
-                  ),
-                })}
-              />
-              <span className="field-note">Milliseconds to ignore repeated wake hits right after activation so one utterance cannot retrigger the assistant.</span>
-            </label>
+            <section className="panel-grid" aria-label="Project status">
+              {readinessItems.map((item) => (
+                <article className="info-card" key={item.label}>
+                  <span className="info-label">{item.label}</span>
+                  <strong>{item.value}</strong>
+                </article>
+              ))}
+            </section>
+          </>
+        ) : (
+          <SettingsView
+            settings={settings}
+            setSettings={setSettings}
+            languageOptions={languageOptions}
+            assistantNameError={assistantNameError}
+            assistantCalibrationRequired={assistantCalibrationRequired}
+            assistantCalibrationComplete={assistantCalibrationComplete}
+            assistantTrainingReadyName={assistantTrainingReadyName}
+            isSavingSettings={isSavingSettings}
+            isWorking={uiState === 'working'}
+            hasUnsavedChanges={hasUnsavedChanges}
+            canSaveSettings={canSaveSettings}
+            onSave={() => persistSettings(settings)}
+            onReset={() => setShowResetDialog(true)}
+            onBack={() => setActiveView('dashboard')}
+            onOpenTraining={openAssistantTrainingDialog}
+            normalizeLanguageCode={normalizeLanguageCode}
+          />
+        )}
 
-            <label className="settings-field settings-field--wide">
-              <span className="info-label">Background startup</span>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.launchAtLogin}
-                  onChange={(event) => setSettings({ ...settings, launchAtLogin: event.target.checked })}
-                />
-                <span>Launch the app automatically when I sign in to Windows</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={settings.startHiddenOnLaunch}
-                  disabled={!settings.launchAtLogin}
-                  onChange={(event) => setSettings({ ...settings, startHiddenOnLaunch: event.target.checked })}
-                />
-                <span>When started automatically, keep the window hidden and run in the background</span>
-              </label>
-              <span className="field-note">Saving this writes or removes a Windows Startup launcher for the current executable. Closing the main window now keeps the assistant alive in the tray so hotkeys, wake-word listening, and the realtime voice session can continue.</span>
-            </label>
-
-            <label className="settings-field settings-field--wide">
-              <span className="info-label">OpenAI API key</span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder="sk-..."
-                value={settings.openaiApiKey}
-                onChange={(event) => setSettings({ ...settings, openaiApiKey: event.target.value })}
-              />
-              <span className="field-note">When set here, it overrides `OPENAI_API_KEY` from `.env`. Leave it empty to keep using `.env`.</span>
-            </label>
-          </div>
-        </section>
+        {activeView === 'dashboard' ? (
+          <>
 
         <section className={`result-card result-card--${voiceAgentState === 'error' ? 'error' : assistantActive ? 'working' : 'success'}`}>
           <div>
@@ -1929,6 +1688,8 @@ export default function App() {
             <li><strong>{hotkeyStatus.accelerator}</strong> reads it aloud, while <strong>{hotkeyStatus.translateAccelerator}</strong> translates it and speaks the translation.</li>
           </ol>
         </section>
+          </>
+        ) : null}
       </main>
 
       {showAssistantTrainingDialog && currentAssistantTrainingStep ? (

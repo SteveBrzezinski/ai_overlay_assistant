@@ -172,10 +172,10 @@ export default function OverlayDock() {
     setIsExpanded(true);
     try {
       await requestOverlayAction({ type: 'open-settings' });
-      setStatusNote('Dashboard toggled.');
+      setStatusNote('Settings page opened.');
     } catch (error: unknown) {
       const text = error instanceof Error ? error.message : String(error);
-      setStatusNote(`Could not open the dashboard: ${text}`);
+      setStatusNote(`Could not open the settings page: ${text}`);
     }
   };
 
