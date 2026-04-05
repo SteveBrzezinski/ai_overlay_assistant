@@ -1,6 +1,9 @@
 use crate::{
     settings::{resolve_openai_api_key, SettingsState},
-    voice_profile::{build_assistant_instructions, build_voice_agent_profile, build_voice_agent_state, VoiceAgentProfile, VoiceAgentState},
+    voice_profile::{
+        build_assistant_instructions, build_voice_agent_profile, build_voice_agent_state,
+        VoiceAgentProfile, VoiceAgentState,
+    },
     voice_tools::{realtime_tools, run_voice_agent_tool},
 };
 use serde::Serialize;
@@ -89,9 +92,5 @@ pub fn run_voice_agent_tool_command(
     settings: State<'_, SettingsState>,
 ) -> Result<RunVoiceAgentToolResult, String> {
     let result = run_voice_agent_tool(&tool_name, args, &app, &settings)?;
-    Ok(RunVoiceAgentToolResult {
-        ok: true,
-        tool_name,
-        result,
-    })
+    Ok(RunVoiceAgentToolResult { ok: true, tool_name, result })
 }

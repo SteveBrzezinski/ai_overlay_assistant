@@ -14,9 +14,9 @@ pub const SETTINGS_EVENT: &str = "settings-updated";
 pub const CONFIG_FILE_NAME: &str = ".voice-overlay-assistant.config.json";
 const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
 const DEFAULT_ASSISTANT_WAKE_THRESHOLD: u8 = 68;
-const DEFAULT_ASSISTANT_CLOSE_THRESHOLD: u8 = 64;
 const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS: u32 = 1200;
-const DEFAULT_VOICE_AGENT_PERSONALITY: &str = "Composed, technically precise, friendly, and concise.";
+const DEFAULT_VOICE_AGENT_PERSONALITY: &str =
+    "Composed, technically precise, friendly, and concise.";
 const DEFAULT_VOICE_AGENT_BEHAVIOR: &str =
     "If a PC task is unclear, ask immediately. If something takes longer, acknowledge it briefly and follow up with the result.";
 const DEFAULT_VOICE_AGENT_EXTRA_INSTRUCTIONS: &str =
@@ -25,6 +25,7 @@ const DEFAULT_VOICE_AGENT_EXTRA_INSTRUCTIONS: &str =
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
+    pub ui_language: String,
     pub translation_target_language: String,
     pub playback_speed: f32,
     pub openai_api_key: String,
@@ -41,17 +42,16 @@ pub struct AppSettings {
     pub voice_agent_tone_notes: String,
     pub voice_agent_onboarding_complete: bool,
     pub assistant_wake_samples: Vec<String>,
-    pub assistant_close_samples: Vec<String>,
     pub assistant_name_samples: Vec<String>,
     pub assistant_sample_language: String,
     pub assistant_wake_threshold: u8,
-    pub assistant_close_threshold: u8,
     pub assistant_cue_cooldown_ms: u32,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            ui_language: "en".to_string(),
             translation_target_language: "en".to_string(),
             playback_speed: DEFAULT_PLAYBACK_SPEED,
             openai_api_key: String::new(),
@@ -68,11 +68,9 @@ impl Default for AppSettings {
             voice_agent_tone_notes: String::new(),
             voice_agent_onboarding_complete: true,
             assistant_wake_samples: Vec::new(),
-            assistant_close_samples: Vec::new(),
             assistant_name_samples: Vec::new(),
             assistant_sample_language: "de".to_string(),
             assistant_wake_threshold: DEFAULT_ASSISTANT_WAKE_THRESHOLD,
-            assistant_close_threshold: DEFAULT_ASSISTANT_CLOSE_THRESHOLD,
             assistant_cue_cooldown_ms: DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
         }
     }
@@ -128,10 +126,7 @@ impl SettingsState {
         write_settings_file(&config_path, &loaded)?;
         background::sync_startup_entry(&loaded)?;
 
-        Ok(Self {
-            settings: Mutex::new(loaded),
-            config_path,
-        })
+        Ok(Self { settings: Mutex::new(loaded), config_path })
     }
     pub fn get(&self) -> AppSettings {
         self.settings.lock().expect("settings poisoned").clone()
@@ -161,12 +156,20 @@ impl SettingsState {
 }
 
 pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
-    let language = settings.translation_target_language.trim().to_lowercase();
-    settings.translation_target_language = if LANGUAGE_OPTIONS.iter().any(|item| item.code == language) {
-        language
+    let ui_language = settings.ui_language.trim().to_lowercase();
+    settings.ui_language = if matches!(ui_language.as_str(), "en" | "de") {
+        ui_language
     } else {
-        AppSettings::default().translation_target_language
+        AppSettings::default().ui_language
     };
+
+    let language = settings.translation_target_language.trim().to_lowercase();
+    settings.translation_target_language =
+        if LANGUAGE_OPTIONS.iter().any(|item| item.code == language) {
+            language
+        } else {
+            AppSettings::default().translation_target_language
+        };
 
     settings.playback_speed = sanitize_playback_speed(settings.playback_speed);
     settings.openai_api_key = settings.openai_api_key.trim().to_string();
@@ -192,27 +195,27 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         settings.voice_agent_personality,
         DEFAULT_VOICE_AGENT_PERSONALITY.to_string(),
     );
-    settings.voice_agent_behavior = sanitize_multiline(
-        settings.voice_agent_behavior,
-        DEFAULT_VOICE_AGENT_BEHAVIOR.to_string(),
-    );
+    settings.voice_agent_behavior =
+        sanitize_multiline(settings.voice_agent_behavior, DEFAULT_VOICE_AGENT_BEHAVIOR.to_string());
     settings.voice_agent_extra_instructions = sanitize_multiline(
         settings.voice_agent_extra_instructions,
         DEFAULT_VOICE_AGENT_EXTRA_INSTRUCTIONS.to_string(),
     );
-    settings.voice_agent_preferred_language = default_voice_agent_preferred_language(&settings.stt_language);
-    settings.voice_agent_tone_notes = sanitize_multiline(settings.voice_agent_tone_notes, String::new());
+    settings.voice_agent_preferred_language =
+        default_voice_agent_preferred_language(&settings.stt_language);
+    settings.voice_agent_tone_notes =
+        sanitize_multiline(settings.voice_agent_tone_notes, String::new());
     settings.assistant_sample_language = if settings.assistant_sample_language.trim().is_empty() {
         settings.stt_language.clone()
     } else {
         settings.assistant_sample_language.trim().to_lowercase()
     };
     settings.assistant_wake_samples = sanitize_phrase_samples(settings.assistant_wake_samples, 4);
-    settings.assistant_close_samples = sanitize_phrase_samples(settings.assistant_close_samples, 4);
     settings.assistant_name_samples = sanitize_phrase_samples(settings.assistant_name_samples, 2);
-    settings.assistant_wake_threshold = sanitize_assistant_threshold(settings.assistant_wake_threshold);
-    settings.assistant_close_threshold = sanitize_assistant_threshold(settings.assistant_close_threshold);
-    settings.assistant_cue_cooldown_ms = sanitize_assistant_cooldown_ms(settings.assistant_cue_cooldown_ms);
+    settings.assistant_wake_threshold =
+        sanitize_assistant_threshold(settings.assistant_wake_threshold);
+    settings.assistant_cue_cooldown_ms =
+        sanitize_assistant_cooldown_ms(settings.assistant_cue_cooldown_ms);
 
     settings
 }
@@ -230,8 +233,7 @@ pub fn resolve_openai_api_key(settings: &AppSettings) -> Result<String, String> 
     load_env_file_if_present();
 
     env::var("OPENAI_API_KEY").map_err(|_| {
-        "OPENAI_API_KEY is missing. Add it in Settings or in the project's .env file."
-            .to_string()
+        "OPENAI_API_KEY is missing. Add it in Settings or in the project's .env file.".to_string()
     })
 }
 
@@ -245,10 +247,7 @@ fn project_root() -> PathBuf {
 fn write_settings_file(path: &Path, settings: &AppSettings) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "Failed to create config directory '{}': {error}",
-                parent.display()
-            )
+            format!("Failed to create config directory '{}': {error}", parent.display())
         })?;
     }
 

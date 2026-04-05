@@ -178,33 +178,40 @@ impl HotkeyState {
 }
 
 fn recompute_timing_metrics(snapshot: &mut HotkeySnapshot) {
-    snapshot.capture_duration_ms = match (snapshot.capture_started_at_ms, snapshot.capture_finished_at_ms) {
-        (Some(started), Some(finished)) => finished.checked_sub(started),
-        _ => None,
-    };
-    snapshot.capture_to_tts_start_ms = match (snapshot.capture_finished_at_ms, snapshot.tts_started_at_ms) {
-        (Some(capture_finished), Some(tts_started)) => tts_started.checked_sub(capture_finished),
-        _ => None,
-    };
-    snapshot.hotkey_to_first_audio_ms = match (snapshot.hotkey_started_at_ms, snapshot.first_audio_received_at_ms) {
-        (Some(hotkey_started), Some(first_audio)) => first_audio.checked_sub(hotkey_started),
-        _ => None,
-    };
-    snapshot.hotkey_to_first_playback_ms = match (snapshot.hotkey_started_at_ms, snapshot.first_audio_playback_started_at_ms) {
-        (Some(hotkey_started), Some(first_playback)) => first_playback.checked_sub(hotkey_started),
-        _ => None,
-    };
-    snapshot.tts_to_first_audio_ms = match (snapshot.tts_started_at_ms, snapshot.first_audio_received_at_ms) {
-        (Some(tts_started), Some(first_audio)) => first_audio.checked_sub(tts_started),
-        _ => None,
-    };
-    snapshot.first_audio_to_playback_ms = match (
-        snapshot.first_audio_received_at_ms,
-        snapshot.first_audio_playback_started_at_ms,
-    ) {
-        (Some(first_audio), Some(first_playback)) => first_playback.checked_sub(first_audio),
-        _ => None,
-    };
+    snapshot.capture_duration_ms =
+        match (snapshot.capture_started_at_ms, snapshot.capture_finished_at_ms) {
+            (Some(started), Some(finished)) => finished.checked_sub(started),
+            _ => None,
+        };
+    snapshot.capture_to_tts_start_ms =
+        match (snapshot.capture_finished_at_ms, snapshot.tts_started_at_ms) {
+            (Some(capture_finished), Some(tts_started)) => {
+                tts_started.checked_sub(capture_finished)
+            }
+            _ => None,
+        };
+    snapshot.hotkey_to_first_audio_ms =
+        match (snapshot.hotkey_started_at_ms, snapshot.first_audio_received_at_ms) {
+            (Some(hotkey_started), Some(first_audio)) => first_audio.checked_sub(hotkey_started),
+            _ => None,
+        };
+    snapshot.hotkey_to_first_playback_ms =
+        match (snapshot.hotkey_started_at_ms, snapshot.first_audio_playback_started_at_ms) {
+            (Some(hotkey_started), Some(first_playback)) => {
+                first_playback.checked_sub(hotkey_started)
+            }
+            _ => None,
+        };
+    snapshot.tts_to_first_audio_ms =
+        match (snapshot.tts_started_at_ms, snapshot.first_audio_received_at_ms) {
+            (Some(tts_started), Some(first_audio)) => first_audio.checked_sub(tts_started),
+            _ => None,
+        };
+    snapshot.first_audio_to_playback_ms =
+        match (snapshot.first_audio_received_at_ms, snapshot.first_audio_playback_started_at_ms) {
+            (Some(first_audio), Some(first_playback)) => first_playback.checked_sub(first_audio),
+            _ => None,
+        };
 }
 
 fn reset_tts_metrics(snapshot: &mut HotkeySnapshot) {
@@ -325,7 +332,9 @@ pub fn init_hotkey(app: &AppHandle) {
     state.update(app, |snapshot| {
         snapshot.registered = false;
         snapshot.state = "unsupported";
-        snapshot.message = "Global hotkey MVP is currently implemented for the packaged Windows app only.".to_string();
+        snapshot.message =
+            "Global hotkey MVP is currently implemented for the packaged Windows app only."
+                .to_string();
     });
 }
 
@@ -343,7 +352,11 @@ mod windows_impl {
         translation::{translate_text, TranslateTextOptions},
         tts::{speak_text_with_progress_and_control, SpeakTextOptions, TtsProgress},
     };
-    use std::{mem::MaybeUninit, thread, time::{Duration, Instant}};
+    use std::{
+        mem::MaybeUninit,
+        thread,
+        time::{Duration, Instant},
+    };
     use windows::Win32::{
         Foundation::HWND,
         UI::{
@@ -380,7 +393,11 @@ mod windows_impl {
                 (PAUSE_RESUME_HOTKEY_ID, VK_P.0 as u32, DEFAULT_PAUSE_RESUME_HOTKEY),
                 (CANCEL_HOTKEY_ID, VK_X.0 as u32, DEFAULT_CANCEL_HOTKEY),
                 (ACTIVATE_ASSISTANT_HOTKEY_ID, VK_A.0 as u32, DEFAULT_ACTIVATE_ASSISTANT_HOTKEY),
-                (DEACTIVATE_ASSISTANT_HOTKEY_ID, VK_D.0 as u32, DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY),
+                (
+                    DEACTIVATE_ASSISTANT_HOTKEY_ID,
+                    VK_D.0 as u32,
+                    DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY,
+                ),
             ] {
                 if let Err(error) = RegisterHotKey(HWND(std::ptr::null_mut()), id, modifiers, key) {
                     let state = app_handle.state::<HotkeyState>();
@@ -415,8 +432,12 @@ mod windows_impl {
                         TRANSLATE_HOTKEY_ID => trigger_capture_and_translate(&app_handle),
                         PAUSE_RESUME_HOTKEY_ID => trigger_pause_resume(&app_handle),
                         CANCEL_HOTKEY_ID => trigger_cancel(&app_handle),
-                        ACTIVATE_ASSISTANT_HOTKEY_ID => trigger_live_stt_control(&app_handle, "activate"),
-                        DEACTIVATE_ASSISTANT_HOTKEY_ID => trigger_live_stt_control(&app_handle, "deactivate"),
+                        ACTIVATE_ASSISTANT_HOTKEY_ID => {
+                            trigger_live_stt_control(&app_handle, "activate")
+                        }
+                        DEACTIVATE_ASSISTANT_HOTKEY_ID => {
+                            trigger_live_stt_control(&app_handle, "deactivate")
+                        }
                         _ => {}
                     }
                     thread::sleep(Duration::from_millis(50));
@@ -436,7 +457,11 @@ mod windows_impl {
         });
     }
 
-    fn begin_run(app: &AppHandle, action: &str, message: String) -> Option<crate::run_controller::RunHandle> {
+    fn begin_run(
+        app: &AppHandle,
+        action: &str,
+        message: String,
+    ) -> Option<crate::run_controller::RunHandle> {
         let controller = app.state::<RunController>();
         match controller.start_run(action) {
             Ok(handle) => {
@@ -537,13 +562,8 @@ mod windows_impl {
             "Requested live assistant deactivation via global hotkey."
         };
 
-        let _ = app.emit(
-            LIVE_STT_CONTROL_EVENT,
-            LiveSttControlPayload {
-                action,
-                source: "hotkey",
-            },
-        );
+        let _ =
+            app.emit(LIVE_STT_CONTROL_EVENT, LiveSttControlPayload { action, source: "hotkey" });
 
         let state = app.state::<HotkeyState>();
         state.update(app, |snapshot| {
@@ -554,7 +574,9 @@ mod windows_impl {
     }
 
     fn trigger_capture_and_speak(app: &AppHandle) {
-        let Some(run_handle) = begin_run(app, "speak", "Speak hotkey received. Capturing selection …".to_string()) else {
+        let Some(run_handle) =
+            begin_run(app, "speak", "Speak hotkey received. Capturing selection …".to_string())
+        else {
             return;
         };
         let app_handle = app.clone();
@@ -590,7 +612,9 @@ mod windows_impl {
                     state.update(&app_handle, |snapshot| {
                         snapshot.state = "error";
                         snapshot.last_action = Some("speak".to_string());
-                        snapshot.message = capture.note.unwrap_or_else(|| "No marked text could be captured.".to_string());
+                        snapshot.message = capture
+                            .note
+                            .unwrap_or_else(|| "No marked text could be captured.".to_string());
                     });
                     return;
                 }
@@ -607,7 +631,9 @@ mod windows_impl {
 
             let settings = app_handle.state::<SettingsState>().get();
             let progress_app = app_handle.clone();
-            let progress = Arc::new(move |progress: TtsProgress| update_progress(&progress_app, "speak", progress));
+            let progress = Arc::new(move |progress: TtsProgress| {
+                update_progress(&progress_app, "speak", progress)
+            });
             let result = speak_text_with_progress_and_control(
                 SpeakTextOptions {
                     text: Some(capture.text.clone()),
@@ -652,19 +678,26 @@ mod windows_impl {
                     snapshot.session_id = Some(result.session_id);
                     snapshot.session_fallback_reason = result.fallback_reason;
                     snapshot.first_audio_received_at_ms = result.first_audio_received_at_ms;
-                    snapshot.first_audio_playback_started_at_ms = result.first_audio_playback_started_at_ms;
+                    snapshot.first_audio_playback_started_at_ms =
+                        result.first_audio_playback_started_at_ms;
                     snapshot.start_latency_ms = result.start_latency_ms;
                     recompute_timing_metrics(snapshot);
                 }),
                 Err(error) if is_cancelled_error(&error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
-                    snapshot.message = format!("Speak run cancelled after {} ms.", overall_started.elapsed().as_millis());
+                    snapshot.message = format!(
+                        "Speak run cancelled after {} ms.",
+                        overall_started.elapsed().as_millis()
+                    );
                     snapshot.last_action = Some("speak".to_string());
                     snapshot.last_captured_text = Some(capture.text.clone());
                 }),
                 Err(error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "error";
-                    snapshot.message = format!("Speak run failed after {} ms: {error}", overall_started.elapsed().as_millis());
+                    snapshot.message = format!(
+                        "Speak run failed after {} ms: {error}",
+                        overall_started.elapsed().as_millis()
+                    );
                     snapshot.last_action = Some("speak".to_string());
                     snapshot.last_captured_text = Some(capture.text.clone());
                 }),
@@ -715,7 +748,9 @@ mod windows_impl {
                     state.update(&app_handle, |snapshot| {
                         snapshot.state = "error";
                         snapshot.last_action = Some("translate".to_string());
-                        snapshot.message = capture.note.unwrap_or_else(|| "No marked text could be captured.".to_string());
+                        snapshot.message = capture
+                            .note
+                            .unwrap_or_else(|| "No marked text could be captured.".to_string());
                     });
                     return;
                 }
@@ -734,12 +769,15 @@ mod windows_impl {
 
             run_access.check_cancelled().ok();
             run_access.update_phase("translating_text");
-            let translation = translate_text(TranslateTextOptions {
-                text: Some(capture.text.clone()),
-                target_language: Some(settings.translation_target_language.clone()),
-                source_language: None,
-                model: None,
-            }, &settings);
+            let translation = translate_text(
+                TranslateTextOptions {
+                    text: Some(capture.text.clone()),
+                    target_language: Some(settings.translation_target_language.clone()),
+                    source_language: None,
+                    model: None,
+                },
+                &settings,
+            );
 
             let translation = match translation {
                 Ok(translation) => translation,
@@ -747,7 +785,10 @@ mod windows_impl {
                     let state = app_handle.state::<HotkeyState>();
                     state.update(&app_handle, |snapshot| {
                         snapshot.state = "success";
-                        snapshot.message = format!("Translate run cancelled after {} ms.", overall_started.elapsed().as_millis());
+                        snapshot.message = format!(
+                            "Translate run cancelled after {} ms.",
+                            overall_started.elapsed().as_millis()
+                        );
                         snapshot.last_action = Some("translate".to_string());
                         snapshot.last_captured_text = Some(capture.text.clone());
                     });
@@ -766,7 +807,9 @@ mod windows_impl {
             };
 
             let progress_app = app_handle.clone();
-            let progress = Arc::new(move |progress: TtsProgress| update_progress(&progress_app, "translate", progress));
+            let progress = Arc::new(move |progress: TtsProgress| {
+                update_progress(&progress_app, "translate", progress)
+            });
             let speech = speak_text_with_progress_and_control(
                 SpeakTextOptions {
                     text: Some(translation.text.clone()),
@@ -801,7 +844,8 @@ mod windows_impl {
                     );
                     snapshot.last_action = Some("translate".to_string());
                     snapshot.last_captured_text = Some(capture.text);
-                    snapshot.last_translation_target_language = Some(translation.target_language.clone());
+                    snapshot.last_translation_target_language =
+                        Some(translation.target_language.clone());
                     snapshot.last_translation_text = Some(translation.text);
                     snapshot.last_audio_path = Some(speech.file_path);
                     snapshot.last_audio_output_directory = Some(speech.output_directory);
@@ -812,24 +856,33 @@ mod windows_impl {
                     snapshot.session_id = Some(speech.session_id);
                     snapshot.session_fallback_reason = speech.fallback_reason;
                     snapshot.first_audio_received_at_ms = speech.first_audio_received_at_ms;
-                    snapshot.first_audio_playback_started_at_ms = speech.first_audio_playback_started_at_ms;
+                    snapshot.first_audio_playback_started_at_ms =
+                        speech.first_audio_playback_started_at_ms;
                     snapshot.start_latency_ms = speech.start_latency_ms;
                     recompute_timing_metrics(snapshot);
                 }),
                 Err(error) if is_cancelled_error(&error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "success";
-                    snapshot.message = format!("Translate run cancelled after {} ms.", overall_started.elapsed().as_millis());
+                    snapshot.message = format!(
+                        "Translate run cancelled after {} ms.",
+                        overall_started.elapsed().as_millis()
+                    );
                     snapshot.last_action = Some("translate".to_string());
                     snapshot.last_captured_text = Some(capture.text.clone());
-                    snapshot.last_translation_target_language = Some(translation.target_language.clone());
+                    snapshot.last_translation_target_language =
+                        Some(translation.target_language.clone());
                     snapshot.last_translation_text = Some(translation.text.clone());
                 }),
                 Err(error) => state.update(&app_handle, |snapshot| {
                     snapshot.state = "error";
-                    snapshot.message = format!("Translated TTS failed after {} ms: {error}", overall_started.elapsed().as_millis());
+                    snapshot.message = format!(
+                        "Translated TTS failed after {} ms: {error}",
+                        overall_started.elapsed().as_millis()
+                    );
                     snapshot.last_action = Some("translate".to_string());
                     snapshot.last_captured_text = Some(capture.text.clone());
-                    snapshot.last_translation_target_language = Some(translation.target_language.clone());
+                    snapshot.last_translation_target_language =
+                        Some(translation.target_language.clone());
                     snapshot.last_translation_text = Some(translation.text.clone());
                 }),
             }
@@ -884,7 +937,8 @@ mod windows_impl {
                 state.update(app, |snapshot| {
                     snapshot.state = "working";
                     snapshot.last_action = Some(action.to_string());
-                    snapshot.message = format!("Realtime session.update ok for session {session_id}.");
+                    snapshot.message =
+                        format!("Realtime session.update ok for session {session_id}.");
                     snapshot.active_tts_mode = Some(mode);
                     snapshot.session_id = Some(session_id);
                 });
@@ -904,7 +958,9 @@ mod windows_impl {
                 state.update(app, |snapshot| {
                     snapshot.state = "working";
                     snapshot.last_action = Some(action.to_string());
-                    snapshot.message = format!("Realtime first audio delta missing for session {session_id}: {detail}");
+                    snapshot.message = format!(
+                        "Realtime first audio delta missing for session {session_id}: {detail}"
+                    );
                     snapshot.active_tts_mode = Some(mode);
                     snapshot.session_id = Some(session_id);
                 });
@@ -946,19 +1002,39 @@ mod windows_impl {
                 });
             }
             TtsProgress::ChunkRequestStarted { index, total, text_chars } => {
-                update_working(app, action, format!("Preparing chunk {}/{} … ({} chars)", index + 1, total, text_chars));
+                update_working(
+                    app,
+                    action,
+                    format!("Preparing chunk {}/{} … ({} chars)", index + 1, total, text_chars),
+                );
             }
             TtsProgress::ChunkRequestFinished { index, total, elapsed_ms, .. } => {
-                update_working(app, action, format!("Chunk {}/{} ready after {} ms.", index + 1, total, elapsed_ms));
+                update_working(
+                    app,
+                    action,
+                    format!("Chunk {}/{} ready after {} ms.", index + 1, total, elapsed_ms),
+                );
             }
             TtsProgress::ChunkFileWritten { index, total, .. } => {
-                update_working(app, action, format!("Chunk {}/{} written. Waiting for ordered playback …", index + 1, total));
+                update_working(
+                    app,
+                    action,
+                    format!(
+                        "Chunk {}/{} written. Waiting for ordered playback …",
+                        index + 1,
+                        total
+                    ),
+                );
             }
             TtsProgress::ChunkPlaybackStarted { index, total, .. } => {
                 update_working(app, action, format!("Playing chunk {}/{} …", index + 1, total));
             }
             TtsProgress::ChunkPlaybackFinished { index, total, elapsed_ms } => {
-                update_working(app, action, format!("Finished chunk {}/{} playback ({} ms).", index + 1, total, elapsed_ms));
+                update_working(
+                    app,
+                    action,
+                    format!("Finished chunk {}/{} playback ({} ms).", index + 1, total, elapsed_ms),
+                );
             }
         }
     }

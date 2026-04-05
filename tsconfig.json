@@ -12,12 +12,14 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "forceConsistentCasingInFileNames": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
+    "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src"],
-  "exclude": ["src/index.ts", "src/lib/**/*"],
+  "include": ["src/**/*"],
+  "exclude": ["src/index.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

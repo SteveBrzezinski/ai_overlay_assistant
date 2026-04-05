@@ -28,7 +28,7 @@ async function main(): Promise<void> {
     autoplay: getArg('--no-play') ? false : true,
   });
 
-  console.log(`Saved speech to ${result.filePath}`);
+  console.debug(`Saved speech to ${result.filePath}`);
 }
 
 main().catch((error: unknown) => {

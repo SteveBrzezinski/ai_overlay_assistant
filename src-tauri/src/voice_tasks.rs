@@ -37,10 +37,7 @@ pub struct VoiceTaskState {
 
 impl Default for VoiceTaskState {
     fn default() -> Self {
-        Self {
-            next_id: AtomicU64::new(1),
-            tasks: Mutex::new(HashMap::new()),
-        }
+        Self { next_id: AtomicU64::new(1), tasks: Mutex::new(HashMap::new()) }
     }
 }
 
@@ -62,21 +59,13 @@ impl VoiceTaskState {
             result: None,
         };
 
-        self.tasks
-            .lock()
-            .expect("voice task state poisoned")
-            .insert(id, task.clone());
+        self.tasks.lock().expect("voice task state poisoned").insert(id, task.clone());
 
         task
     }
 
     pub fn emit_task(&self, app: &AppHandle, task: &VoiceTask) {
-        let _ = app.emit(
-            VOICE_AGENT_TASK_EVENT,
-            VoiceTaskEventPayload {
-                task: task.clone(),
-            },
-        );
+        let _ = app.emit(VOICE_AGENT_TASK_EVENT, VoiceTaskEventPayload { task: task.clone() });
     }
 
     pub fn update_task(
@@ -100,11 +89,7 @@ impl VoiceTaskState {
     }
 
     pub fn get_task(&self, task_id: &str) -> Option<VoiceTask> {
-        self.tasks
-            .lock()
-            .expect("voice task state poisoned")
-            .get(task_id)
-            .cloned()
+        self.tasks.lock().expect("voice task state poisoned").get(task_id).cloned()
     }
 }
 
@@ -113,9 +98,7 @@ pub fn get_voice_agent_task_command(
     task_id: String,
     state: State<'_, VoiceTaskState>,
 ) -> Result<VoiceTask, String> {
-    state
-        .get_task(&task_id)
-        .ok_or_else(|| format!("Voice task not found: {task_id}"))
+    state.get_task(&task_id).ok_or_else(|| format!("Voice task not found: {task_id}"))
 }
 
 fn system_time_ms() -> u64 {

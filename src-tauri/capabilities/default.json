@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default desktop capability for the MVP shell",
-  "windows": ["main"],
+  "windows": ["main", "action-bar", "chat-overlay"],
   "permissions": ["core:default"]
 }

@@ -83,7 +83,9 @@ pub fn recall_voice_memory_command(
 }
 
 #[tauri::command]
-pub fn get_recent_voice_memory_command(limit: Option<usize>) -> Result<RecentVoiceMemoryResult, String> {
+pub fn get_recent_voice_memory_command(
+    limit: Option<usize>,
+) -> Result<RecentVoiceMemoryResult, String> {
     get_recent_voice_memory(limit.unwrap_or(5))
 }
 
@@ -102,7 +104,8 @@ pub fn store_voice_session_memory(
         });
     }
 
-    let lines = summarize_session_lines(request, settings).unwrap_or_else(|_| build_fallback_lines(request));
+    let lines = summarize_session_lines(request, settings)
+        .unwrap_or_else(|_| build_fallback_lines(request));
     if lines.is_empty() {
         return Ok(StoreVoiceSessionMemoryResult {
             ok: true,
@@ -113,15 +116,22 @@ pub fn store_voice_session_memory(
     }
 
     ensure_memory_directory()?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&file_path)
-        .map_err(|error| format!("Failed to open memory file {}: {error}", file_path.to_string_lossy()))?;
+    let mut file =
+        OpenOptions::new().create(true).append(true).open(&file_path).map_err(|error| {
+            format!("Failed to open memory file {}: {error}", file_path.to_string_lossy())
+        })?;
     let time_label = Local::now().format("%H:%M:%S").to_string();
     for line in &lines {
-        writeln!(file, "[{}][{}] {}", time_label, normalize_reason(&request.disconnect_reason), line)
-            .map_err(|error| format!("Failed to append memory line to {}: {error}", file_path.to_string_lossy()))?;
+        writeln!(
+            file,
+            "[{}][{}] {}",
+            time_label,
+            normalize_reason(&request.disconnect_reason),
+            line
+        )
+        .map_err(|error| {
+            format!("Failed to append memory line to {}: {error}", file_path.to_string_lossy())
+        })?;
     }
 
     Ok(StoreVoiceSessionMemoryResult {
@@ -132,7 +142,9 @@ pub fn store_voice_session_memory(
     })
 }
 
-pub fn recall_voice_memory(request: &RecallVoiceMemoryRequest) -> Result<RecallVoiceMemoryResult, String> {
+pub fn recall_voice_memory(
+    request: &RecallVoiceMemoryRequest,
+) -> Result<RecallVoiceMemoryResult, String> {
     let dates = resolve_search_dates(request)?;
     let query_terms = tokenize_query(&request.query);
     let limit = request.limit.unwrap_or(5).clamp(1, 20);
@@ -146,8 +158,9 @@ pub fn recall_voice_memory(request: &RecallVoiceMemoryRequest) -> Result<RecallV
             continue;
         }
 
-        let contents = fs::read_to_string(&path)
-            .map_err(|error| format!("Failed to read memory file {}: {error}", path.to_string_lossy()))?;
+        let contents = fs::read_to_string(&path).map_err(|error| {
+            format!("Failed to read memory file {}: {error}", path.to_string_lossy())
+        })?;
 
         for line in contents.lines() {
             let trimmed = line.trim();
@@ -167,14 +180,12 @@ pub fn recall_voice_memory(request: &RecallVoiceMemoryRequest) -> Result<RecallV
         }
     }
 
-    matches.sort_by(|left, right| right.score.cmp(&left.score).then_with(|| right.date.cmp(&left.date)));
+    matches.sort_by(|left, right| {
+        right.score.cmp(&left.score).then_with(|| right.date.cmp(&left.date))
+    });
     matches.truncate(limit);
 
-    Ok(RecallVoiceMemoryResult {
-        ok: true,
-        matches,
-        searched_files,
-    })
+    Ok(RecallVoiceMemoryResult { ok: true, matches, searched_files })
 }
 
 pub fn get_recent_voice_memory(limit: usize) -> Result<RecentVoiceMemoryResult, String> {
@@ -189,8 +200,9 @@ pub fn get_recent_voice_memory(limit: usize) -> Result<RecentVoiceMemoryResult, 
         });
     }
 
-    let contents = fs::read_to_string(&path)
-        .map_err(|error| format!("Failed to read memory file {}: {error}", path.to_string_lossy()))?;
+    let contents = fs::read_to_string(&path).map_err(|error| {
+        format!("Failed to read memory file {}: {error}", path.to_string_lossy())
+    })?;
     let mut lines = contents
         .lines()
         .map(str::trim)
@@ -258,8 +270,8 @@ fn summarize_session_lines(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "Memory summarization response was empty".to_string())?;
 
-    let parsed: serde_json::Value =
-        serde_json::from_str(content).map_err(|error| format!("Failed to parse memory JSON: {error}"))?;
+    let parsed: serde_json::Value = serde_json::from_str(content)
+        .map_err(|error| format!("Failed to parse memory JSON: {error}"))?;
     let lines = parsed
         .get("lines")
         .and_then(serde_json::Value::as_array)
@@ -280,7 +292,12 @@ fn summarize_session_lines(
 fn build_fallback_lines(request: &StoreVoiceSessionMemoryRequest) -> Vec<String> {
     let mut lines = Vec::new();
     let mut seen = HashSet::new();
-    for source in [&request.task_events, &request.tool_events, &request.user_transcripts, &request.assistant_transcripts] {
+    for source in [
+        &request.task_events,
+        &request.tool_events,
+        &request.user_transcripts,
+        &request.assistant_transcripts,
+    ] {
         for item in source.iter().rev() {
             let normalized = item.split_whitespace().collect::<Vec<_>>().join(" ");
             if normalized.is_empty() || seen.contains(&normalized) {
@@ -297,34 +314,38 @@ fn build_fallback_lines(request: &StoreVoiceSessionMemoryRequest) -> Vec<String>
 }
 
 fn collect_session_material(request: &StoreVoiceSessionMemoryRequest) -> Vec<String> {
-    [request.user_transcripts.clone(), request.assistant_transcripts.clone(), request.tool_events.clone(), request.task_events.clone()]
-        .into_iter()
-        .flatten()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
+    [
+        request.user_transcripts.clone(),
+        request.assistant_transcripts.clone(),
+        request.tool_events.clone(),
+        request.task_events.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|item| item.trim().to_string())
+    .filter(|item| !item.is_empty())
+    .collect()
 }
 
 fn ensure_memory_directory() -> Result<(), String> {
-    fs::create_dir_all(memory_directory())
-        .map_err(|error| format!("Failed to create memory directory {}: {error}", memory_directory().to_string_lossy()))
+    fs::create_dir_all(memory_directory()).map_err(|error| {
+        format!(
+            "Failed to create memory directory {}: {error}",
+            memory_directory().to_string_lossy()
+        )
+    })
 }
 
 fn memory_directory() -> PathBuf {
-    runtime_data_root()
-        .join("brain")
+    runtime_data_root().join("brain")
 }
 
 fn runtime_data_root() -> PathBuf {
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        return PathBuf::from(local_app_data)
-            .join("VoiceOverlayAssistant")
-            .join("runtime");
+        return PathBuf::from(local_app_data).join("VoiceOverlayAssistant").join("runtime");
     }
 
-    dirs_fallback_home()
-        .join(".voice-overlay-assistant")
-        .join("runtime")
+    dirs_fallback_home().join(".voice-overlay-assistant").join("runtime")
 }
 
 fn dirs_fallback_home() -> PathBuf {
@@ -352,9 +373,7 @@ fn resolve_search_dates(request: &RecallVoiceMemoryRequest) -> Result<Vec<NaiveD
     }
 
     let days_back = request.days_back_limit.unwrap_or(14).clamp(1, 60);
-    Ok((0..=days_back)
-        .map(|offset| Local::now().date_naive() - Duration::days(offset))
-        .collect())
+    Ok((0..=days_back).map(|offset| Local::now().date_naive() - Duration::days(offset)).collect())
 }
 
 fn parse_explicit_date(raw: &str) -> Option<NaiveDate> {
@@ -394,7 +413,8 @@ fn extract_days_ago_number(query: &str) -> Option<i64> {
 }
 
 fn tokenize_query(query: &str) -> Vec<String> {
-    query.to_lowercase()
+    query
+        .to_lowercase()
         .split(|char: char| !char.is_alphanumeric() && char != ':' && char != '\\' && char != '.')
         .map(str::trim)
         .filter(|term| term.len() >= 2)
@@ -410,7 +430,16 @@ fn score_line(line: &str, query_terms: &[String], explicit_date: Option<&str>) -
     let lower = line.to_lowercase();
     query_terms.iter().fold(0, |score, term| {
         if lower.contains(term) {
-            score + if term.contains(':') || term.contains('\\') || term.ends_with(".docx") || term.ends_with(".txt") { 4 } else { 2 }
+            score
+                + if term.contains(':')
+                    || term.contains('\\')
+                    || term.ends_with(".docx")
+                    || term.ends_with(".txt")
+                {
+                    4
+                } else {
+                    2
+                }
         } else {
             score
         }
