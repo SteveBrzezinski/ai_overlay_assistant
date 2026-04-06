@@ -9,6 +9,8 @@ import {
   requestAssistantControl,
   toggleChatWindow,
   toggleMainWindow,
+  getSettings,
+  onSettingsUpdated,
 } from './lib/voiceOverlay';
 
 function GearIcon() {
@@ -112,12 +114,15 @@ export default function ActionBarApp() {
   const [isAssistantActive, setIsAssistantActive] = useState(false);
   const [isSettingsToggling, setIsSettingsToggling] = useState(false);
   const [isChatToggling, setIsChatToggling] = useState(false);
+  const [actionBarDisplayMode, setActionBarDisplayMode] = useState<'icons-only' | 'text-only' | 'icons-and-text'>('icons-and-text');
+  const [settingsWindowWasOpen, setSettingsWindowWasOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     let unlistenMainWindow: (() => void | Promise<void>) | undefined;
     let unlistenChatWindow: (() => void | Promise<void>) | undefined;
     let unlistenAssistantState: (() => void | Promise<void>) | undefined;
+    let unlistenSettings: (() => void | Promise<void>) | undefined;
 
     document.documentElement.classList.add('overlay-html');
     document.body.classList.add('overlay-body');
@@ -158,12 +163,25 @@ export default function ActionBarApp() {
         }
       });
 
+    void getSettings()
+      .then((settings) => {
+        if (isMounted) {
+          setActionBarDisplayMode(settings.actionBarDisplayMode ?? 'icons-and-text');
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setActionBarDisplayMode('icons-and-text');
+        }
+      });
+
     void onMainWindowVisibility(({ visible }) => {
       if (!isMounted) {
         return;
       }
 
       setIsMainWindowVisible(visible);
+      setSettingsWindowWasOpen(visible);
       setIsSettingsToggling(false);
     }).then((cleanup) => {
       unlistenMainWindow = cleanup;
@@ -188,6 +206,14 @@ export default function ActionBarApp() {
       unlistenAssistantState = cleanup;
     });
 
+    void onSettingsUpdated((settings) => {
+      if (isMounted) {
+        setActionBarDisplayMode(settings.actionBarDisplayMode ?? 'icons-and-text');
+      }
+    }).then((cleanup) => {
+      unlistenSettings = cleanup;
+    });
+
     return () => {
       isMounted = false;
       document.documentElement.classList.remove('overlay-html');
@@ -195,6 +221,7 @@ export default function ActionBarApp() {
       void unlistenMainWindow?.();
       void unlistenChatWindow?.();
       void unlistenAssistantState?.();
+      void unlistenSettings?.();
     };
   }, []);
 
@@ -207,7 +234,9 @@ export default function ActionBarApp() {
     try {
       const visible = await toggleMainWindow();
       setIsMainWindowVisible(visible);
-    } finally {
+      setIsSettingsToggling(false);
+    } catch (error) {
+      console.error('Settings toggle error:', error);
       setIsSettingsToggling(false);
     }
   };
@@ -221,7 +250,15 @@ export default function ActionBarApp() {
     try {
       const visible = await toggleChatWindow();
       setIsChatWindowVisible(visible);
-    } finally {
+      // Force state sync after a delay to ensure UI matches backend
+      setTimeout(() => {
+        void getChatWindowVisibility().then((updated) => {
+          setIsChatWindowVisible(updated);
+          setIsChatToggling(false);
+        });
+      }, 150);
+    } catch (error) {
+      console.error('Chat toggle error:', error);
       setIsChatToggling(false);
     }
   };
@@ -243,29 +280,34 @@ export default function ActionBarApp() {
           <button
             type="button"
             className={`action-bar-button${isAssistantActive ? ' action-bar-button--active' : ''}`}
+            data-display-mode={actionBarDisplayMode}
             aria-label={isAssistantActive ? 'Assistent deaktivieren' : 'Assistent aktivieren'}
             aria-pressed={isAssistantActive}
             title={isAssistantActive ? 'Assistent deaktivieren' : 'Assistent aktivieren'}
             onClick={() => void handleAssistantToggle()}
           >
-            <AssistantIcon />
+            {actionBarDisplayMode !== 'text-only' && <AssistantIcon />}
+            {actionBarDisplayMode !== 'icons-only' && <span className="action-bar-label">Speak</span>}
           </button>
 
           <button
             type="button"
             className={`action-bar-button${isChatWindowVisible ? ' action-bar-button--active' : ''}`}
+            data-display-mode={actionBarDisplayMode}
             aria-label={isChatWindowVisible ? 'Chat schliessen' : 'Chat oeffnen'}
             aria-pressed={isChatWindowVisible}
             disabled={isChatToggling}
             title={isChatWindowVisible ? 'Chat schliessen' : 'Chat oeffnen'}
             onClick={() => void handleChatToggle()}
           >
-            <ChatIcon />
+            {actionBarDisplayMode !== 'text-only' && <ChatIcon />}
+            {actionBarDisplayMode !== 'icons-only' && <span className="action-bar-label">Chat</span>}
           </button>
 
           <button
             type="button"
             className={`action-bar-button${isMainWindowVisible ? ' action-bar-button--active' : ''}`}
+            data-display-mode={actionBarDisplayMode}
             aria-label={
               isMainWindowVisible
                 ? 'Voice Overlay Assistant schliessen'
@@ -280,7 +322,8 @@ export default function ActionBarApp() {
             }
             onClick={() => void handleSettingsToggle()}
           >
-            <GearIcon />
+            {actionBarDisplayMode !== 'text-only' && <GearIcon />}
+            {actionBarDisplayMode !== 'icons-only' && <span className="action-bar-label">Settings</span>}
           </button>
         </div>
       </div>

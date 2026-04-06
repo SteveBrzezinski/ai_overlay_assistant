@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useMemo, useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { DESIGN_THEME_OPTIONS, getDesignThemeLabel, normalizeDesignThemeId } from './designThemes';
 import type {
   AppSettings,
@@ -11,8 +11,9 @@ import {
   ASSISTANT_MATCH_THRESHOLD_MAX,
   ASSISTANT_MATCH_THRESHOLD_MIN,
 } from './lib/liveStt';
+import { updateSettings } from './lib/voiceOverlay';
 
-type SettingsSectionId = 'general' | 'assistant' | 'startup' | 'api' | 'design';
+type SettingsSectionId = 'general' | 'assistant' | 'startup' | 'api' | 'design' | 'actionbar';
 
 type SettingsViewProps = {
   settings: AppSettings;
@@ -100,6 +101,24 @@ export default function SettingsView({
   const [hostedPassword, setHostedPassword] = useState('');
   const hostedEmail = hostedEmailDraft ?? settings.hostedAccountEmail;
 
+  // Auto-save actionBarDisplayMode when it changes
+  useEffect(() => {
+    const saveActionBarMode = async () => {
+      try {
+        await updateSettings(settings);
+      } catch (error) {
+        console.error('Failed to save actionBarDisplayMode:', error);
+      }
+    };
+
+    // Small debounce to avoid excessive saves
+    const timeoutId = setTimeout(() => {
+      void saveActionBarMode();
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [settings.actionBarDisplayMode]);
+
   const isHostedMode = settings.aiProviderMode === 'hosted';
   const hostedRealtimeEnabled = Boolean(
     hostedAccount?.entitlements.some((item) => item.feature === 'hosted_realtime' && item.enabled),
@@ -168,6 +187,16 @@ export default function SettingsView({
         description: 'Your theme system for dashboard, settings, action bar, and orb.',
         summary: selectedThemeLabel,
       },
+      {
+        id: 'actionbar',
+        label: 'Actionbar',
+        description: 'Action bar button display and behavior settings.',
+        summary: settings.actionBarDisplayMode === 'icons-only' 
+          ? 'Icons only'
+          : settings.actionBarDisplayMode === 'text-only'
+            ? 'Text only'
+            : 'Icons and text',
+      },
     ];
   }, [
     assistantCalibrationComplete,
@@ -183,6 +212,7 @@ export default function SettingsView({
     settings.sttLanguage,
     settings.translationTargetLanguage,
     settings.uiLanguage,
+    settings.actionBarDisplayMode,
     translationTargetLabel,
     hostedAccount,
   ]);
@@ -730,6 +760,76 @@ export default function SettingsView({
     }
 
     const selectedThemeId = normalizeDesignThemeId(settings.designThemeId);
+
+    if (activeSection === 'actionbar') {
+      return (
+        <div className="settings-detail-stack">
+          <div className="settings-panel-header">
+            <div>
+              <span className="settings-panel-eyebrow">Actionbar</span>
+              <h2>Actionbar Display</h2>
+              <p className="settings-helper">Control how the action bar buttons display text, icons, or both.</p>
+            </div>
+            <button type="button" className="settings-link-button" onClick={() => setActiveSection(null)}>
+              Show categories
+            </button>
+          </div>
+          <div className="settings-actionbar-content">
+            <fieldset className="settings-actionbar-fieldset">
+              <legend className="info-label">Button display mode</legend>
+              <div className="radio-group">
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="actionBarDisplayMode"
+                    value="icons-only"
+                    checked={settings.actionBarDisplayMode === 'icons-only'}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        actionBarDisplayMode: e.target.value as 'icons-only' | 'text-only' | 'icons-and-text',
+                      })
+                    }
+                  />
+                  <span className="radio-label-text">Icons only</span>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="actionBarDisplayMode"
+                    value="text-only"
+                    checked={settings.actionBarDisplayMode === 'text-only'}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        actionBarDisplayMode: e.target.value as 'icons-only' | 'text-only' | 'icons-and-text',
+                      })
+                    }
+                  />
+                  <span className="radio-label-text">Text only</span>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="actionBarDisplayMode"
+                    value="icons-and-text"
+                    checked={settings.actionBarDisplayMode === 'icons-and-text'}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        actionBarDisplayMode: e.target.value as 'icons-only' | 'text-only' | 'icons-and-text',
+                      })
+                    }
+                  />
+                  <span className="radio-label-text">Icons and text</span>
+                </label>
+              </div>
+              <span className="field-note">Choose how buttons appear in the action bar. Save settings to apply the change immediately.</span>
+            </fieldset>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="settings-detail-stack">

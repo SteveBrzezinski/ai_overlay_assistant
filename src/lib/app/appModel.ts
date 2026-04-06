@@ -116,6 +116,7 @@ export const fallbackSettings: AppSettings = {
   assistantSampleLanguage: 'de',
   assistantWakeThreshold: DEFAULT_ASSISTANT_WAKE_THRESHOLD,
   assistantCueCooldownMs: DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
+  actionBarDisplayMode: 'icons-and-text',
 };
 
 export function mergeHostedSettings(target: AppSettings, source: AppSettings): AppSettings {

@@ -56,6 +56,7 @@ export type AppSettings = {
   assistantSampleLanguage: string;
   assistantWakeThreshold: number;
   assistantCueCooldownMs: number;
+  actionBarDisplayMode: 'icons-only' | 'text-only' | 'icons-and-text';
 };
 
 export type LanguageOption = {

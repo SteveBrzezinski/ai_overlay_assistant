@@ -343,6 +343,23 @@ export function SettingsSection(props: SettingsSectionProps): JSX.Element {
           <span className="field-note">{t('settings.backgroundStartupNote')}</span>
         </label>
 
+        <label className="settings-field">
+          <span className="info-label">{t('settings.actionBarDisplay')}</span>
+          <select
+            value={settings.actionBarDisplayMode}
+            onChange={(event) =>
+              onSettingsChange({
+                ...settings,
+                actionBarDisplayMode: event.target.value as 'icons-only' | 'text-only' | 'icons-and-text',
+              })
+            }
+          >
+            <option value="icons-only">{t('settings.actionBarDisplayIconsOnly')}</option>
+            <option value="text-only">{t('settings.actionBarDisplayTextOnly')}</option>
+            <option value="icons-and-text">{t('settings.actionBarDisplayIconsAndText')}</option>
+          </select>
+        </label>
+
         {isHostedMode ? (
           <>
             <label className="settings-field settings-field--wide">

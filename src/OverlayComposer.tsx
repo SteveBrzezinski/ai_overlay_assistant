@@ -46,6 +46,7 @@ const fallbackSettings: AppSettings = {
   assistantSampleLanguage: 'de',
   assistantWakeThreshold: 74,
   assistantCueCooldownMs: 1000,
+  actionBarDisplayMode: 'icons-and-text',
 };
 
 const fallbackOverlayState: OverlayState = {
