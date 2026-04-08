@@ -87,6 +87,7 @@ export const fallbackSettings: AppSettings = {
   ttsMode: 'classic',
   realtimeAllowLiveFallback: false,
   designThemeId: 'obsidian-halo',
+  actionBarActiveGlowColor: '#b63131',
   ttsFormat: 'wav',
   firstChunkLeadingSilenceMs: 180,
   uiLanguage: 'en',

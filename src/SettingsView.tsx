@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { DESIGN_THEME_OPTIONS, getDesignThemeLabel, normalizeDesignThemeId } from './designThemes';
 import type {
   AppSettings,
@@ -11,7 +11,6 @@ import {
   ASSISTANT_MATCH_THRESHOLD_MAX,
   ASSISTANT_MATCH_THRESHOLD_MIN,
 } from './lib/liveStt';
-import { updateSettings } from './lib/voiceOverlay';
 
 type SettingsSectionId = 'general' | 'assistant' | 'startup' | 'api' | 'design' | 'actionbar';
 
@@ -101,23 +100,7 @@ export default function SettingsView({
   const [hostedPassword, setHostedPassword] = useState('');
   const hostedEmail = hostedEmailDraft ?? settings.hostedAccountEmail;
 
-  // Auto-save actionBarDisplayMode when it changes
-  useEffect(() => {
-    const saveActionBarMode = async () => {
-      try {
-        await updateSettings(settings);
-      } catch (error) {
-        console.error('Failed to save actionBarDisplayMode:', error);
-      }
-    };
 
-    // Small debounce to avoid excessive saves
-    const timeoutId = setTimeout(() => {
-      void saveActionBarMode();
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [settings.actionBarDisplayMode]);
 
   const isHostedMode = settings.aiProviderMode === 'hosted';
   const hostedRealtimeEnabled = Boolean(
@@ -191,7 +174,7 @@ export default function SettingsView({
         id: 'actionbar',
         label: 'Actionbar',
         description: 'Action bar button display and behavior settings.',
-        summary: settings.actionBarDisplayMode === 'icons-only' 
+        summary: settings.actionBarDisplayMode === 'icons-only'
           ? 'Icons only'
           : settings.actionBarDisplayMode === 'text-only'
             ? 'Text only'
@@ -826,6 +809,40 @@ export default function SettingsView({
               </div>
               <span className="field-note">Choose how buttons appear in the action bar. Save settings to apply the change immediately.</span>
             </fieldset>
+            <label className="settings-field settings-field--wide">
+              <span className="info-label">Active button glow color</span>
+              <div className="settings-color-row">
+                <input
+                  type="color"
+                  className="settings-color-picker"
+                  value={settings.actionBarActiveGlowColor}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      actionBarActiveGlowColor: event.target.value,
+                    })
+                  }
+                />
+                <input
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="settings-color-value"
+                  placeholder="#b63131"
+                  value={settings.actionBarActiveGlowColor}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      actionBarActiveGlowColor: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <span className="field-note">
+                This color is used for the active glow on Speak, Chat, and Settings.
+              </span>
+            </label>
           </div>
         </div>
       );

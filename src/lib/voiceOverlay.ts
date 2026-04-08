@@ -28,6 +28,7 @@ export type AppSettings = {
   ttsMode: 'classic' | 'live' | 'realtime';
   realtimeAllowLiveFallback: boolean;
   designThemeId: DesignThemeId;
+  actionBarActiveGlowColor: string;
   ttsFormat: 'wav' | 'mp3';
   firstChunkLeadingSilenceMs: number;
   uiLanguage: string;

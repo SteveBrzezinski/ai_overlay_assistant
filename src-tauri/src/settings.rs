@@ -13,6 +13,7 @@ pub const DEFAULT_CANCEL_HOTKEY: &str = "Ctrl+Shift+X";
 pub const SETTINGS_EVENT: &str = "settings-updated";
 pub const CONFIG_FILE_NAME: &str = ".voice-overlay-assistant.config.json";
 const DEFAULT_DESIGN_THEME_ID: &str = "obsidian-halo";
+const DEFAULT_ACTION_BAR_ACTIVE_GLOW_COLOR: &str = "#b63131";
 const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
 const DEFAULT_ASSISTANT_WAKE_THRESHOLD: u8 = 68;
 const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS: u32 = 1200;
@@ -29,6 +30,8 @@ pub struct AppSettings {
     pub tts_mode: String,
     pub realtime_allow_live_fallback: bool,
     pub design_theme_id: String,
+    pub action_bar_active_glow_color: String,
+    pub action_bar_display_mode: String,
     pub tts_format: String,
     pub first_chunk_leading_silence_ms: u32,
     pub ui_language: String,
@@ -65,6 +68,8 @@ impl Default for AppSettings {
             tts_mode: "classic".to_string(),
             realtime_allow_live_fallback: false,
             design_theme_id: DEFAULT_DESIGN_THEME_ID.to_string(),
+            action_bar_active_glow_color: DEFAULT_ACTION_BAR_ACTIVE_GLOW_COLOR.to_string(),
+            action_bar_display_mode: "icons-and-text".to_string(),
             tts_format: "wav".to_string(),
             first_chunk_leading_silence_ms: 180,
             ui_language: "en".to_string(),
@@ -199,6 +204,16 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         "kitsune-matsuri" => "kitsune-matsuri".to_string(),
         _ => DEFAULT_DESIGN_THEME_ID.to_string(),
     };
+    settings.action_bar_display_mode =
+        match settings.action_bar_display_mode.trim().to_lowercase().as_str() {
+            "icons-only" => "icons-only".to_string(),
+            "text-only" => "text-only".to_string(),
+            _ => "icons-and-text".to_string(),
+        };
+    settings.action_bar_active_glow_color = sanitize_hex_color(
+        settings.action_bar_active_glow_color,
+        DEFAULT_ACTION_BAR_ACTIVE_GLOW_COLOR,
+    );
     settings.tts_format = match settings.tts_format.trim().to_lowercase().as_str() {
         "mp3" => "mp3".to_string(),
         _ => "wav".to_string(),
@@ -367,6 +382,19 @@ fn sanitize_provider_mode(value: String) -> String {
 
 fn sanitize_api_base_url(value: String) -> String {
     value.trim().trim_end_matches('/').to_string()
+}
+
+fn sanitize_hex_color(value: String, fallback: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    let is_valid = normalized.len() == 7
+        && normalized.starts_with('#')
+        && normalized.chars().skip(1).all(|character| character.is_ascii_hexdigit());
+
+    if is_valid {
+        normalized
+    } else {
+        fallback.to_string()
+    }
 }
 
 fn sanitize_assistant_threshold(value: u8) -> u8 {
