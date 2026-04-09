@@ -21,6 +21,7 @@
         "decorations": false,
         "shadow": true,
         "theme": "Dark",
+        "focus": false,
         "visible": false,
         "center": true
       }

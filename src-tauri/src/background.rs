@@ -192,7 +192,7 @@ pub fn apply_launch_behavior<R: Runtime>(app: &AppHandle<R>, settings: &AppSetti
     if should_start_hidden(settings) {
         let _ = hide_main_window(app);
     } else {
-        let _ = show_main_window(app);
+        let _ = show_main_window_on_launch(app);
     }
 }
 
@@ -353,6 +353,38 @@ fn show_main_window<R: Runtime, M: Manager<R>>(manager: &M) -> Result<bool, Stri
 
     window.show().map_err(|error| format!("Failed to show the main window: {error}"))?;
     window.set_focus().map_err(|error| format!("Failed to focus the main window: {error}"))?;
+
+    let app = manager.app_handle();
+    emit_main_window_visibility(app, true);
+    Ok(true)
+}
+
+fn show_main_window_on_launch<R: Runtime, M: Manager<R>>(manager: &M) -> Result<bool, String> {
+    let window = manager
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "Main window is unavailable.".to_string())?;
+
+    if window
+        .is_minimized()
+        .map_err(|error| format!("Failed to check main window minimized state: {error}"))?
+    {
+        window
+            .unminimize()
+            .map_err(|error| format!("Failed to restore the main window: {error}"))?;
+    }
+
+    window
+        .set_focusable(false)
+        .map_err(|error| format!("Failed to disable main window focus during launch: {error}"))?;
+    let show_result = window
+        .show()
+        .map_err(|error| format!("Failed to show the main window during launch: {error}"));
+    let restore_focusable_result = window
+        .set_focusable(true)
+        .map_err(|error| format!("Failed to restore main window focusability after launch: {error}"));
+
+    show_result?;
+    restore_focusable_result?;
 
     let app = manager.app_handle();
     emit_main_window_visibility(app, true);

@@ -85,7 +85,7 @@
     "trainWakePhrase": "Train wake phrase",
     "assistantCalibrationWarning": "Please train the current name and language before saving.",
     "assistantCalibrationReady": "Wake-word calibration is ready for this name and language.",
-    "assistantNameNote": "Use 4-8 characters, one single word. The wake phrase stays in English: <wake>Hey {{assistantName}}</wake> activates the assistant.",
+    "assistantNameNote": "Use 3-8 characters, one single word. The wake phrase stays in English: <wake>Hey {{assistantName}}</wake> activates the assistant.",
     "activeTranscriptionLanguage": "Active transcription language",
     "activeTranscriptionLanguageNote": "This language is also used while training and listening for the wake phrase. If you change it, you need to record the training samples again, for example <code>de</code> or <code>en</code>.",
     "wakeMatchThreshold": "Wake match threshold",
@@ -100,6 +100,9 @@
     "actionBarDisplayIconsOnly": "Icons only",
     "actionBarDisplayTextOnly": "Text only",
     "actionBarDisplayIconsAndText": "Icons and text",
+    "actionBarDisplayNote": "Choose how buttons appear in the action bar. Save settings to apply the change immediately.",
+    "actionBarGlowColor": "Active button glow color",
+    "actionBarGlowColorNote": "This color is used for the active glow on Speak, Chat, and Settings.",
     "hostedApiBaseUrl": "Hosted backend URL",
     "hostedApiBaseUrlNote": "Enter the Laravel app base URL, for example <code>https://app.example.com</code>. The desktop client uses it for sign-in and session minting.",
     "hostedAccount": "Hosted account",
@@ -128,6 +131,64 @@
     "hostedBillingOpening": "Opening Checkout...",
     "openaiApiKey": "OpenAI API key",
     "openaiApiKeyNote": "When set here, it overrides <env>OPENAI_API_KEY</env> from <envFile>.env</envFile>. Leave it empty to keep using <envFile>.env</envFile>."
+  },
+  "settingsPage": {
+    "dashboard": "Dashboard",
+    "categories": "Categories",
+    "showCategories": "Show categories",
+    "overviewEyebrow": "Settings overview",
+    "overviewTitle": "Select a category",
+    "overviewDescription": "On the left you only see the main categories. Click one of them and the matching dev settings appear on the right.",
+    "heroCopy": "This page now keeps only the dev settings plus the theme selection from your design work.",
+    "unsavedChangesReady": "Unsaved changes are ready to save.",
+    "allSettingsSaved": "All settings are saved.",
+    "generalSummary": "{{translationTarget}} / UI {{uiLanguage}} / {{playbackSpeed}}x",
+    "assistantSummaryReady": "{{assistant}} / {{language}} / training ready",
+    "assistantSummaryRecommended": "{{assistant}} / {{language}} / training recommended",
+    "assistantSummaryDefault": "{{assistant}} / {{language}}",
+    "startupSummaryAutoHidden": "Auto-start hidden",
+    "startupSummaryAutoVisible": "Auto-start visible",
+    "startupSummaryManual": "Manual start",
+    "apiSummaryHostedConnected": "Hosted / {{workspace}}",
+    "apiSummaryHostedRequired": "Hosted / sign in required",
+    "apiSummaryByoCustomKey": "BYO / custom API key",
+    "apiSummaryByoEnvKey": "BYO / using .env key",
+    "designSelectedForPreview": "Selected for preview",
+    "designApplyNote": "The main window previews your selection immediately. Save the settings to push the design to the action bar, the orb overlay, and future launches.",
+    "sections": {
+      "general": {
+        "label": "General",
+        "description": "Target language, UI language, and playback speed from dev.",
+        "helper": "These are the language and playback settings that belong to dev."
+      },
+      "assistant": {
+        "label": "Assistant",
+        "description": "Wake name, STT language, and assistant matching settings from dev.",
+        "helper": "Only the assistant naming, training, and listening settings from dev."
+      },
+      "startup": {
+        "label": "Startup",
+        "description": "Launch and background behavior from dev.",
+        "helper": "These are the startup and background options kept from dev."
+      },
+      "api": {
+        "label": "API",
+        "description": "Provider mode, hosted account, billing, and OpenAI access from dev.",
+        "helper": "This keeps the dev provider flow: bring your own OpenAI key or sign in to the hosted backend."
+      },
+      "design": {
+        "label": "Design",
+        "description": "Your theme system for dashboard, settings, action bar, and orb.",
+        "helper": "These are the theme options from your design branches and nothing else."
+      },
+      "actionbar": {
+        "label": "Actionbar",
+        "title": "Actionbar Display",
+        "description": "Action bar button display and behavior settings.",
+        "helper": "Control how the action bar buttons display text, icons, or both.",
+        "fieldsetLegend": "Button display mode"
+      }
+    }
   },
   "assistantStatus": {
     "title": "Wake / voice assistant",

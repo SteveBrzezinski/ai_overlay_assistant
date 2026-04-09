@@ -85,7 +85,7 @@
     "trainWakePhrase": "Wake-Phrase trainieren",
     "assistantCalibrationWarning": "Bitte trainiere den aktuellen Namen und die aktuelle Sprache, bevor du speicherst.",
     "assistantCalibrationReady": "Die Wake-Word-Kalibrierung ist für diesen Namen und diese Sprache bereit.",
-    "assistantNameNote": "Verwende 4 bis 8 Zeichen, genau ein Wort. Die Wake-Phrase bleibt auf Englisch: <wake>Hey {{assistantName}}</wake> aktiviert den Assistenten.",
+    "assistantNameNote": "Verwende 3 bis 8 Zeichen, genau ein Wort. Die Wake-Phrase bleibt auf Englisch: <wake>Hey {{assistantName}}</wake> aktiviert den Assistenten.",
     "activeTranscriptionLanguage": "Sprache der aktiven Transkription",
     "activeTranscriptionLanguageNote": "Diese Sprache wird jetzt auch beim Training und beim Lauschen auf die Wake-Phrase verwendet. Wenn du sie änderst, musst du die Trainingsbeispiele neu aufnehmen, z. B. <code>de</code> oder <code>en</code>.",
     "wakeMatchThreshold": "Wake-Match-Schwelle",
@@ -100,6 +100,9 @@
     "actionBarDisplayIconsOnly": "Nur Symbole",
     "actionBarDisplayTextOnly": "Nur Text",
     "actionBarDisplayIconsAndText": "Symbole und Text",
+    "actionBarDisplayNote": "Wähle, wie die Buttons in der Actionbar angezeigt werden. Speichere die Einstellungen, um die Änderung sofort anzuwenden.",
+    "actionBarGlowColor": "Leuchtfarbe aktiver Buttons",
+    "actionBarGlowColorNote": "Diese Farbe wird für das aktive Leuchten von Speak, Chat und Einstellungen verwendet.",
     "hostedApiBaseUrl": "Hosted-Backend-URL",
     "hostedApiBaseUrlNote": "Trage die Basis-URL deiner Laravel-App ein, zum Beispiel <code>https://app.example.com</code>. Der Desktop-Client verwendet sie für Anmeldung und Session-Minting.",
     "hostedAccount": "Hosted-Konto",
@@ -128,6 +131,141 @@
     "hostedBillingOpening": "Öffnet Checkout...",
     "openaiApiKey": "OpenAI-API-Schlüssel",
     "openaiApiKeyNote": "Wenn hier gesetzt, überschreibt er <env>OPENAI_API_KEY</env> aus <envFile>.env</envFile>. Leer lassen, um weiterhin <envFile>.env</envFile> zu verwenden."
+  },
+  "settingsPage": {
+    "dashboard": "Dashboard",
+    "categories": "Kategorien",
+    "showCategories": "Kategorien anzeigen",
+    "overviewEyebrow": "Einstellungsübersicht",
+    "overviewTitle": "Kategorie auswählen",
+    "overviewDescription": "Links siehst du nur die Hauptkategorien. Klicke eine davon an, dann erscheinen rechts die passenden Dev-Einstellungen.",
+    "heroCopy": "Diese Seite enthält jetzt nur noch die Dev-Einstellungen plus die Theme-Auswahl aus deiner Design-Arbeit.",
+    "unsavedChangesReady": "Ungespeicherte Änderungen können gespeichert werden.",
+    "allSettingsSaved": "Alle Einstellungen sind gespeichert.",
+    "generalSummary": "{{translationTarget}} / UI {{uiLanguage}} / {{playbackSpeed}}x",
+    "assistantSummaryReady": "{{assistant}} / {{language}} / Training bereit",
+    "assistantSummaryRecommended": "{{assistant}} / {{language}} / Training empfohlen",
+    "assistantSummaryDefault": "{{assistant}} / {{language}}",
+    "startupSummaryAutoHidden": "Autostart ausgeblendet",
+    "startupSummaryAutoVisible": "Autostart sichtbar",
+    "startupSummaryManual": "Manueller Start",
+    "apiSummaryHostedConnected": "Hosted / {{workspace}}",
+    "apiSummaryHostedRequired": "Hosted / Anmeldung erforderlich",
+    "apiSummaryByoCustomKey": "BYO / eigener API-Schlüssel",
+    "apiSummaryByoEnvKey": "BYO / .env-Schlüssel aktiv",
+    "designSelectedForPreview": "Für Vorschau ausgewählt",
+    "designApplyNote": "Das Hauptfenster zeigt deine Auswahl sofort in der Vorschau. Speichere die Einstellungen, um das Design auf Actionbar, Orb-Overlay und künftige Starts zu übernehmen.",
+    "sections": {
+      "general": {
+        "label": "Allgemein",
+        "description": "Zielsprache, UI-Sprache und Wiedergabegeschwindigkeit aus dev.",
+        "helper": "Hier liegen die Sprach- und Wiedergabeeinstellungen aus dev."
+      },
+      "assistant": {
+        "label": "Assistent",
+        "description": "Wake-Name, STT-Sprache und Matching-Einstellungen des Assistenten aus dev.",
+        "helper": "Hier liegen nur Benennung, Training und Listening-Einstellungen des Assistenten aus dev."
+      },
+      "startup": {
+        "label": "Start",
+        "description": "Start- und Hintergrundverhalten aus dev.",
+        "helper": "Hier liegen die Start- und Hintergrundoptionen aus dev."
+      },
+      "api": {
+        "label": "API",
+        "description": "Provider-Modus, Hosted-Konto, Abrechnung und OpenAI-Zugriff aus dev.",
+        "helper": "Hier bleibt der Dev-Provider-Flow erhalten: eigener OpenAI-Schlüssel oder Anmeldung am Hosted-Backend."
+      },
+      "design": {
+        "label": "Design",
+        "description": "Dein Theme-System für Dashboard, Einstellungen, Actionbar und Orb.",
+        "helper": "Hier sind nur die Theme-Optionen aus deinen Design-Branches."
+      },
+      "actionbar": {
+        "label": "Actionbar",
+        "title": "Actionbar-Anzeige",
+        "description": "Anzeige- und Verhaltensoptionen für die Actionbar.",
+        "helper": "Steuere, ob die Actionbar-Buttons Text, Symbole oder beides anzeigen.",
+        "fieldsetLegend": "Button-Anzeige"
+      }
+    },
+    "themeCards": {
+      "obsidian-halo": {
+        "accent": "Schwarzes Glas / weißes Leuchten",
+        "description": "Tiefe schwarze Panels, helle weiße Highlights und ein kräftiges Außenleuchten um Rahmen und Orb.",
+        "contrast": "Hoher Kontrast"
+      },
+      "shadow-satin": {
+        "accent": "Graphit / satiniertes Silber",
+        "description": "Graphitfarbene Oberflächen mit weicheren Silberkanten für einen ruhigeren, matteren Desktop-Look.",
+        "contrast": "Ausgewogener Kontrast"
+      },
+      "olympian-marble": {
+        "accent": "Marmor / Goldblatt",
+        "description": "Weiße Marmorflächen mit feinen dunklen Adern, gebürsteter Goldrahmung und kühlen silbernen Akzenten.",
+        "contrast": "Heller Luxus"
+      },
+      "retro-signal": {
+        "accent": "Bernstein / Phosphor-Teal",
+        "description": "Ein warmer CRT-Retro-Look mit Bernsteinglühen, türkisfarbenem Kantenlicht und feiner Scanline-Textur.",
+        "contrast": "Retro-Neon"
+      },
+      "fantasy-relic": {
+        "accent": "Amethyst / Mint-Sigillen",
+        "description": "Samtige Nachtpanels, verzauberte Juweltöne und ein Runen-Kristall-Orb statt des Black-Hole-Kerns.",
+        "contrast": "Mystischer Kontrast"
+      },
+      "retro-arcade": {
+        "accent": "Neon-Magenta / Cyan",
+        "description": "Magenta-Cyan-Arcadeflächen mit pulsierendem Scanline-Orb und animierten Level-Balken.",
+        "contrast": "Arcade-Glow"
+      },
+      "modern-glass": {
+        "accent": "Eisglas / Kobalt",
+        "description": "Klare Frosted-Glass-Panels, kühle blaue Highlights und ein minimalistischer Glas-Puls-Orb mit umlaufenden Knoten.",
+        "contrast": "Sanftes modernes Licht"
+      },
+      "universe-drift": {
+        "accent": "Sternenlicht / kosmisches Violett",
+        "description": "Nebelgradienten, tiefes Mitternachts-Framing und ein Planeten-Orb mit driftenden Satelliten.",
+        "contrast": "Tiefraum-Glow"
+      },
+      "creed-eclipse": {
+        "accent": "Sync-Weiß / Animus-Cyan",
+        "description": "Animus-inspirierte holografische Weißtöne, eisiges Cyan und ein Synchronisations-Orb mit Scanringen und Datenknoten.",
+        "contrast": "Simulations-Glow"
+      },
+      "volt-forge": {
+        "accent": "Volt-Grün / Gunmetal",
+        "description": "Schwarzmetall-Chassis, giftige Volt-Traces und ein Reaktor-Orb aus Hex-Stahl und Neon-Klingen.",
+        "contrast": "Räuberisches Neon"
+      },
+      "brass-engine": {
+        "accent": "Messing / Ofen-Bernstein",
+        "description": "Nietverkleidetes Messing, glühende Druckanzeigen und ein Uhrwerk-Reaktor-Orb mit Dampf und Zahnrädern.",
+        "contrast": "Industrielle Opulenz"
+      },
+      "shadow-monarch": {
+        "accent": "Void-Violett / Königsblau",
+        "description": "Tiefschwarzer Obsidian, abyssale Indigo-Glows und ein Schattenportal-Orb mit beschworenen Splittern und Spektralnebel.",
+        "contrast": "Abgründiger Anime-Glow"
+      },
+      "tsukuyomi-veil": {
+        "accent": "Mondsilber / Mitternachtsviolett",
+        "description": "Mondbeschienener Indigo-Lack, silberne Schreinelemente und ein Finsternis-Orb mit treibenden Schleiern und Glyphenblüten.",
+        "contrast": "Mythisches Mondlicht"
+      },
+      "anime-companion": {
+        "accent": "Sakura-Pink / Aqua-Funken",
+        "description": "Ein lebendiges 2D-Companion-Theme mit Sakura-Neon, cyanfarbenen Sparkle-Trails und einer kleinen animierten Figur statt eines Orbs.",
+        "contrast": "Animierter Companion"
+      },
+      "kitsune-matsuri": {
+        "accent": "Zinnober / Washi-Gold",
+        "description": "Ein markantes japanisches Festival-Theme mit zinnoberroten Lackrahmen, Washi-Gold-Glow, Shoji-Bewegung und Fuchsmaske im Voice-Overlay.",
+        "contrast": "Festival-Lack"
+      }
+    }
   },
   "assistantStatus": {
     "title": "Wake / Sprachassistent",
