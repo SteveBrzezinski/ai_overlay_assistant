@@ -379,9 +379,9 @@ fn show_main_window_on_launch<R: Runtime, M: Manager<R>>(manager: &M) -> Result<
     let show_result = window
         .show()
         .map_err(|error| format!("Failed to show the main window during launch: {error}"));
-    let restore_focusable_result = window
-        .set_focusable(true)
-        .map_err(|error| format!("Failed to restore main window focusability after launch: {error}"));
+    let restore_focusable_result = window.set_focusable(true).map_err(|error| {
+        format!("Failed to restore main window focusability after launch: {error}")
+    });
 
     show_result?;
     restore_focusable_result?;
