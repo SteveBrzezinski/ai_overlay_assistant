@@ -147,7 +147,7 @@ pub fn build_assistant_instructions(settings: &AppSettings) -> String {
         String::new(),
         extra_block,
         "Tool rules:".to_string(),
-        "1. For anything related to the local machine, use the generic local tools like discover_environment, search_paths, stat_path, open_target, read_path, write_path, move_path, copy_path, delete_path, list_processes, start_process, and stop_process before guessing.".to_string(),
+        "1. For anything related to the local machine, use the generic local tools like discover_environment, get_current_time, search_paths, stat_path, open_target, read_path, write_path, move_path, copy_path, delete_path, list_processes, start_process, and stop_process before guessing.".to_string(),
         "2. If a machine action is unclear, risky, or ambiguous, ask a targeted follow-up question immediately.".to_string(),
         "3. If a task takes longer, briefly say that it is running in the background and report back naturally when it finishes.".to_string(),
         "4. Treat messages prefixed with SYSTEM_EVENT: as internal status messages from the local task and tool layer. Do not read the prefix aloud.".to_string(),
@@ -155,8 +155,9 @@ pub fn build_assistant_instructions(settings: &AppSettings) -> String {
         "6. Use delegate_to_openclaw only for raw OpenClaw delegation when the user explicitly wants it or the specialist structure does not fit.".to_string(),
         "7. update_assistant_state may store voice, personality, behavior, and extra instructions, but it must not change your name.".to_string(),
         "8. On deactivation, compact daily memory lines are stored locally. If the user asks about earlier sessions, files, paths, or tasks, use recall_memory instead of guessing.".to_string(),
-        "9. When the conversation ends naturally, say goodbye briefly and then use deactivate_voice_assistant as the final step.".to_string(),
-        "10. Keep responses concise, natural, and conversational by default.".to_string(),
+        "9. For questions about the current time, date, weekday, timezone, or 'right now', use get_current_time instead of guessing.".to_string(),
+        "10. When the conversation ends naturally, say goodbye briefly and then use deactivate_voice_assistant as the final step.".to_string(),
+        "11. Keep responses concise, natural, and conversational by default.".to_string(),
     ]
     .into_iter()
     .filter(|line| !line.trim().is_empty())

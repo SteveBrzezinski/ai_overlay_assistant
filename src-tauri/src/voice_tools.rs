@@ -4,6 +4,7 @@ use crate::{
     voice_profile::{build_assistant_instructions, build_voice_agent_state},
     voice_tasks::VoiceTaskState,
 };
+use chrono::{Local, Offset, Utc};
 use serde_json::{json, Value};
 use std::{
     collections::{HashSet, VecDeque},
@@ -27,6 +28,12 @@ pub fn realtime_tools() -> Vec<Value> {
             "type": "function",
             "name": "discover_environment",
             "description": "Returns the current local runtime context such as operating system, working directory, home directory, temp directory, and important default paths.",
+            "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+        }),
+        json!({
+            "type": "function",
+            "name": "get_current_time",
+            "description": "Returns the current local date and time from this PC. Use this for questions about the current time, date, weekday, timezone offset, or 'right now'.",
             "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
         }),
         json!({
@@ -294,6 +301,7 @@ pub fn run_voice_agent_tool(
 ) -> Result<Value, String> {
     match tool_name {
         "discover_environment" | "get_pc_context" => discover_environment_tool(),
+        "get_current_time" | "get_local_time" | "get_time" => get_current_time_tool(),
         "search_paths" | "find_paths" => search_paths_tool(&args),
         "stat_path" => stat_path_tool(&args),
         "open_target" => open_target_tool(&args),
@@ -331,6 +339,35 @@ fn discover_environment_tool() -> Result<Value, String> {
         "commonLocations": common_locations(),
         "pathSeparator": "\\",
         "projectRoot": project_root().to_string_lossy(),
+    }))
+}
+
+fn get_current_time_tool() -> Result<Value, String> {
+    let local_now = Local::now();
+    let utc_now = Utc::now();
+    let offset_seconds = local_now.offset().fix().local_minus_utc();
+    let offset_minutes = offset_seconds / 60;
+    let human_local_time = local_now.format("%H:%M").to_string();
+    let precise_local_time = local_now.format("%H:%M:%S").to_string();
+
+    Ok(json!({
+        "ok": true,
+        "localDateTime": local_now.to_rfc3339(),
+        "localDate": local_now.format("%Y-%m-%d").to_string(),
+        "localTime": human_local_time,
+        "localTimePrecise": precise_local_time,
+        "weekday": local_now.format("%A").to_string(),
+        "timezoneOffsetMinutes": offset_minutes,
+        "timezoneOffsetLabel": format_offset_label(offset_seconds),
+        "utcDateTime": utc_now.to_rfc3339(),
+        "unixTimestamp": utc_now.timestamp(),
+        "unixTimestampMs": utc_now.timestamp_millis(),
+        "message": format!(
+            "Local PC time is {} on {} (UTC{}).",
+            local_now.format("%H:%M"),
+            local_now.format("%Y-%m-%d"),
+            format_offset_label(offset_seconds)
+        ),
     }))
 }
 
@@ -2128,6 +2165,14 @@ fn escape_powershell_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+fn format_offset_label(offset_seconds: i32) -> String {
+    let sign = if offset_seconds >= 0 { '+' } else { '-' };
+    let absolute = offset_seconds.abs();
+    let hours = absolute / 3600;
+    let minutes = (absolute % 3600) / 60;
+    format!("{sign}{hours:02}:{minutes:02}")
+}
+
 struct ShellOutput {
     stdout: String,
     stderr: String,
@@ -2287,7 +2332,7 @@ fn extract_json_value(raw_text: &str) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_word_document, extract_json_value};
+    use super::{create_word_document, extract_json_value, format_offset_label, get_current_time_tool};
     use serde_json::json;
     use std::{
         env, fs,
@@ -2336,5 +2381,27 @@ mod tests {
         assert!(document_xml.contains("Wie man einen Kuchen backt."));
 
         let _ = fs::remove_file(target);
+    }
+
+    #[test]
+    fn format_offset_label_formats_positive_and_negative_offsets() {
+        assert_eq!(format_offset_label(7200), "+02:00");
+        assert_eq!(format_offset_label(-19800), "-05:30");
+    }
+
+    #[test]
+    fn get_current_time_tool_returns_local_clock_payload() {
+        let payload = get_current_time_tool().expect("current time tool should succeed");
+
+        assert_eq!(payload.get("ok").and_then(serde_json::Value::as_bool), Some(true));
+        assert!(payload.get("localDateTime").and_then(serde_json::Value::as_str).is_some());
+        assert_eq!(
+            payload.get("localTime").and_then(serde_json::Value::as_str).map(str::len),
+            Some(5)
+        );
+        assert!(payload.get("localTimePrecise").and_then(serde_json::Value::as_str).is_some());
+        assert!(payload.get("weekday").and_then(serde_json::Value::as_str).is_some());
+        assert!(payload.get("timezoneOffsetMinutes").and_then(serde_json::Value::as_i64).is_some());
+        assert!(payload.get("message").and_then(serde_json::Value::as_str).is_some());
     }
 }
