@@ -2197,6 +2197,14 @@ body.overlay-body #root {
   pointer-events: auto;
 }
 
+.edge-nav-timer-dialog {
+  position: absolute;
+  left: 14px;
+  bottom: 86px;
+  width: min(620px, calc(100vw - 28px));
+  pointer-events: auto;
+}
+
 .timer-panel {
   display: grid;
   gap: 14px;
@@ -4731,7 +4739,7 @@ select:focus-visible {
 }
 
 .voice-chat-message {
-  max-width: 84%;
+  max-width: 100%;
   display: grid;
   gap: 6px;
   padding: 12px 14px;
@@ -4740,7 +4748,7 @@ select:focus-visible {
   background:
     radial-gradient(circle at top left, var(--panel-glow-soft), transparent 38%),
     var(--panel-bg-soft);
-  box-shadow: 0 14px 22px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .voice-chat-message--user {
@@ -4749,9 +4757,7 @@ select:focus-visible {
   background:
     radial-gradient(circle at top right, var(--panel-glow-medium), transparent 42%),
     var(--button-primary-bg);
-  box-shadow:
-    0 14px 24px rgba(0, 0, 0, 0.2),
-    0 0 22px var(--panel-glow-soft);
+  box-shadow: none;
 }
 
 .voice-chat-message--assistant {
@@ -4780,6 +4786,59 @@ select:focus-visible {
   margin: 0;
   white-space: pre-wrap;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.voice-chat-message-content {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.voice-chat-inline-code {
+  display: inline-block;
+  margin: 0 0.12rem;
+  padding: 0.14rem 0.42rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--panel-bg-deep);
+  color: var(--text-primary);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.9em;
+  white-space: break-spaces;
+}
+
+.voice-chat-code-block {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-chat-code-language {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.voice-chat-code-block pre {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: var(--panel-bg-deep);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.voice-chat-code-block code {
+  display: block;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  white-space: pre;
 }
 
 .voice-chat-message--typing {

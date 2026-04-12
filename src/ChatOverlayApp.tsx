@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   getSettings,
   onChatWindowVisibility,
@@ -176,6 +176,107 @@ function describeConnectionState(state: string, assistantActive: boolean): strin
   }
 
   return 'Bereit';
+}
+
+type MessageSegment =
+  | {
+      type: 'text';
+      content: string;
+    }
+  | {
+      type: 'code';
+      language: string;
+      content: string;
+    };
+
+function parseMessageSegments(text: string): MessageSegment[] {
+  const segments: MessageSegment[] = [];
+  const fencePattern = /```([\w+-]*)\n?([\s\S]*?)```/g;
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(fencePattern)) {
+    const matchIndex = match.index ?? 0;
+    if (matchIndex > lastIndex) {
+      segments.push({
+        type: 'text',
+        content: text.slice(lastIndex, matchIndex),
+      });
+    }
+
+    segments.push({
+      type: 'code',
+      language: (match[1] ?? '').trim(),
+      content: (match[2] ?? '').replace(/\n$/, ''),
+    });
+    lastIndex = matchIndex + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({
+      type: 'text',
+      content: text.slice(lastIndex),
+    });
+  }
+
+  return segments.length
+    ? segments
+    : [
+        {
+          type: 'text',
+          content: text,
+        },
+      ];
+}
+
+function renderInlineCode(text: string): ReactNode[] {
+  const parts = text.split(/(`[^`]+`)/g);
+
+  return parts.map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
+      return (
+        <code key={`inline-${index}`} className="voice-chat-inline-code">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+
+    return <Fragment key={`text-${index}`}>{part}</Fragment>;
+  });
+}
+
+function renderMessageContent(text: string): ReactNode {
+  const segments = parseMessageSegments(text);
+
+  return segments.map((segment, index) => {
+    if (segment.type === 'code') {
+      return (
+        <section key={`code-${index}`} className="voice-chat-code-block">
+          {segment.language ? (
+            <span className="voice-chat-code-language">{segment.language}</span>
+          ) : null}
+          <pre>
+            <code>{segment.content}</code>
+          </pre>
+        </section>
+      );
+    }
+
+    const paragraphs = segment.content
+      .split(/\n{2,}/)
+      .map((paragraph) => paragraph.trim())
+      .filter(Boolean);
+
+    return paragraphs.map((paragraph, paragraphIndex) => (
+      <p key={`paragraph-${index}-${paragraphIndex}`}>
+        {paragraph.split('\n').map((line, lineIndex) => (
+          <Fragment key={`line-${index}-${paragraphIndex}-${lineIndex}`}>
+            {lineIndex > 0 ? <br /> : null}
+            {renderInlineCode(line)}
+          </Fragment>
+        ))}
+      </p>
+    ));
+  });
 }
 
 export default function ChatOverlayApp() {
@@ -490,7 +591,7 @@ export default function ChatOverlayApp() {
                       ? assistantName
                       : 'System'}
                 </span>
-                <p>{message.text}</p>
+                <div className="voice-chat-message-content">{renderMessageContent(message.text)}</div>
               </article>
             ))
           ) : (

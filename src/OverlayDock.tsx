@@ -40,7 +40,7 @@ const EXPANDED_LAYOUTS = {
   'icons-and-text': { width: 470, height: 84 },
 } as const;
 const TIMER_FLYOUT_HEIGHT = 286;
-const TIMER_DIALOG_LAYOUT = { minWidth: 440, height: 600 };
+const TIMER_DIALOG_LAYOUT = { minWidth: 620, height: 760 };
 const DEFAULT_ACTION_BAR_ACTIVE_GLOW_COLOR = '#f06525';
 
 type ActionBarDisplayMode = keyof typeof EXPANDED_LAYOUTS;
@@ -879,18 +879,22 @@ export default function OverlayDock() {
         </div>
       </div>
 
-      <TimerEditorDialog
-        open={timerEditorMode !== null}
-        timer={timerEditorMode === 'edit' ? timerEditorTimer : null}
-        variant="dock"
-        isBusy={isTimerEditorBusy}
-        onClose={() => {
-          setTimerEditorMode(null);
-          setTimerEditorTimer(null);
-          openTimerFlyout();
-        }}
-        onSubmit={(payload) => void handleSubmitTimerEditor(payload)}
-      />
+      {timerEditorMode !== null ? (
+        <div className="edge-nav-timer-dialog">
+          <TimerEditorDialog
+            open={timerEditorMode !== null}
+            timer={timerEditorMode === 'edit' ? timerEditorTimer : null}
+            variant="dock"
+            isBusy={isTimerEditorBusy}
+            onClose={() => {
+              setTimerEditorMode(null);
+              setTimerEditorTimer(null);
+              openTimerFlyout();
+            }}
+            onSubmit={(payload) => void handleSubmitTimerEditor(payload)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

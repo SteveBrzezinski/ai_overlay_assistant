@@ -139,7 +139,7 @@ export function TimerEditorDialog(props: TimerEditorDialogProps): JSX.Element | 
 
   if (variant === 'dock') {
     return (
-      <AppSurfaceCard className="w-full">
+      <AppSurfaceCard className="w-full overflow-visible">
         <AppSurfaceHeader
           title={timer ? t('dialogs.timerEditorTitleEdit') : t('dialogs.timerEditorTitleCreate')}
           description={t('dialogs.timerEditorBody')}
