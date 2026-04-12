@@ -265,10 +265,7 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
     } else {
         trimmed_assistant_name.to_string()
     };
-    settings.voice_agent_model = sanitize_non_empty_line(
-        settings.voice_agent_model,
-        AppSettings::default().voice_agent_model,
-    );
+    settings.voice_agent_model = sanitize_voice_agent_model(settings.voice_agent_model);
     settings.voice_agent_personality = sanitize_multiline(
         settings.voice_agent_personality,
         DEFAULT_VOICE_AGENT_PERSONALITY.to_string(),
@@ -354,15 +351,6 @@ fn sanitize_phrase_samples(samples: Vec<String>, max_len: usize) -> Vec<String> 
         .collect()
 }
 
-fn sanitize_non_empty_line(value: String, fallback: String) -> String {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() {
-        fallback
-    } else {
-        normalized
-    }
-}
-
 fn sanitize_multiline(value: String, fallback: String) -> String {
     let normalized = value
         .lines()
@@ -401,6 +389,16 @@ pub fn sanitize_voice_agent_gender(value: String) -> String {
         "masculine" => "masculine".to_string(),
         "neutral" => "neutral".to_string(),
         _ => DEFAULT_VOICE_AGENT_GENDER.to_string(),
+    }
+}
+
+pub fn sanitize_voice_agent_model(value: String) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "gpt-realtime-mini" | "realtime-mini" | "realtime_mini" => {
+            "gpt-realtime-mini".to_string()
+        }
+        "gpt-realtime" | "gpt-realtime-1.5" | "realtime" => "gpt-realtime".to_string(),
+        _ => AppSettings::default().voice_agent_model,
     }
 }
 
@@ -483,5 +481,27 @@ fn load_env_file_if_present() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_voice_agent_model;
+
+    #[test]
+    fn sanitizes_supported_voice_agent_models() {
+        assert_eq!(sanitize_voice_agent_model("gpt-realtime".to_string()), "gpt-realtime");
+        assert_eq!(
+            sanitize_voice_agent_model("gpt-realtime-mini".to_string()),
+            "gpt-realtime-mini"
+        );
+        assert_eq!(
+            sanitize_voice_agent_model("gpt-realtime-1.5".to_string()),
+            "gpt-realtime"
+        );
+        assert_eq!(
+            sanitize_voice_agent_model("realtime-mini".to_string()),
+            "gpt-realtime-mini"
+        );
     }
 }

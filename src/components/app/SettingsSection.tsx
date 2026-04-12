@@ -14,6 +14,11 @@ import type {
 } from '../../lib/voiceOverlay';
 import { normalizeLanguageCode, parseBoundedInteger } from '../../lib/app/appModel';
 
+const VOICE_AGENT_MODEL_OPTIONS = [
+  { value: 'gpt-realtime', labelKey: 'settings.voiceAssistantModelOptionRealtime' },
+  { value: 'gpt-realtime-mini', labelKey: 'settings.voiceAssistantModelOptionRealtimeMini' },
+] as const;
+
 type SettingsSectionProps = {
   settings: AppSettings;
   languageOptions: LanguageOption[];
@@ -241,6 +246,26 @@ export function SettingsSection(props: SettingsSectionProps): JSX.Element {
               components={{ wake: <code /> }}
             />
           </span>
+        </label>
+
+        <label className="settings-field">
+          <span className="info-label">{t('settings.voiceAssistantModel')}</span>
+          <select
+            value={settings.voiceAgentModel}
+            onChange={(event) =>
+              onSettingsChange({
+                ...settings,
+                voiceAgentModel: event.target.value,
+              })
+            }
+          >
+            {VOICE_AGENT_MODEL_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {t(option.labelKey)}
+              </option>
+            ))}
+          </select>
+          <span className="field-note">{t('settings.voiceAssistantModelNote')}</span>
         </label>
 
         <label className="settings-field">

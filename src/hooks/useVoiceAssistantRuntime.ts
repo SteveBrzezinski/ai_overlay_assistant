@@ -59,6 +59,7 @@ export type VoiceAssistantRuntime = {
   deactivateAssistantVoice: (source?: string) => Promise<void>;
   startLiveTranscription: (options?: { activateImmediately?: boolean }) => Promise<void>;
   restartVoiceAgentSession: (reason: string, shouldResumeListening: boolean) => Promise<void>;
+  closeVoiceAgentSession: (reason: string) => Promise<void>;
   stopLiveTranscription: () => Promise<void>;
 };
 
@@ -301,6 +302,22 @@ export function useVoiceAssistantRuntime(
       await realtimeVoiceAgentRef.current?.startListening(reason);
     }
   }, [startVoiceAgent, stopVoiceAgent]);
+
+  const closeVoiceAgentSession = useCallback(async (reason: string): Promise<void> => {
+    if (liveSttControllerRef.current && assistantActive) {
+      liveSttControllerRef.current.manualDeactivate(normalizeAssistantSource(reason));
+    } else if (!liveSttControllerRef.current) {
+      setAssistantActive(false);
+      setAssistantStateDetail(i18n.t('voiceRuntime.voiceSessionIdle'));
+      setLiveTranscriptionStatus(i18n.t('voiceRuntime.voiceSessionIdle'));
+      setLiveTranscript('');
+      setLastSttActiveTranscript('');
+    }
+
+    if (realtimeVoiceAgentRef.current) {
+      await stopVoiceAgent(reason);
+    }
+  }, [assistantActive, stopVoiceAgent]);
 
   const startLiveTranscription = useCallback(async (startOptions?: {
     activateImmediately?: boolean;
@@ -766,6 +783,7 @@ export function useVoiceAssistantRuntime(
     deactivateAssistantVoice,
     startLiveTranscription,
     restartVoiceAgentSession,
+    closeVoiceAgentSession,
     stopLiveTranscription,
   };
 }

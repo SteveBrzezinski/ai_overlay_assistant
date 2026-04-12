@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 
 type VoiceStyleRestartDialogProps = {
   open: boolean;
+  changeKind: 'gender' | 'model' | 'model-and-gender';
   isBusy: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -11,11 +12,42 @@ export function VoiceStyleRestartDialog(
   props: VoiceStyleRestartDialogProps,
 ): JSX.Element | null {
   const { t } = useTranslation();
-  const { open, isBusy, onClose, onConfirm } = props;
+  const { open, changeKind, isBusy, onClose, onConfirm } = props;
 
   if (!open) {
     return null;
   }
+
+  const titleKey =
+    changeKind === 'model'
+      ? 'dialogs.voiceModelRestartTitle'
+      : changeKind === 'model-and-gender'
+        ? 'dialogs.voiceStyleModelRestartTitle'
+        : 'dialogs.voiceStyleRestartTitle';
+  const bodyKey =
+    changeKind === 'model'
+      ? 'dialogs.voiceModelRestartBody'
+      : changeKind === 'model-and-gender'
+        ? 'dialogs.voiceStyleModelRestartBody'
+        : 'dialogs.voiceStyleRestartBody';
+  const detailKey =
+    changeKind === 'model'
+      ? 'dialogs.voiceModelRestartDetail'
+      : changeKind === 'model-and-gender'
+        ? 'dialogs.voiceStyleModelRestartDetail'
+        : 'dialogs.voiceStyleRestartDetail';
+  const confirmKey =
+    changeKind === 'model'
+      ? 'dialogs.voiceModelRestartConfirm'
+      : changeKind === 'model-and-gender'
+        ? 'dialogs.voiceStyleModelRestartConfirm'
+        : 'dialogs.voiceStyleRestartConfirm';
+  const confirmingKey =
+    changeKind === 'model'
+      ? 'dialogs.voiceModelRestartConfirming'
+      : changeKind === 'model-and-gender'
+        ? 'dialogs.voiceStyleModelRestartConfirming'
+        : 'dialogs.voiceStyleRestartConfirming';
 
   return (
     <div
@@ -39,9 +71,9 @@ export function VoiceStyleRestartDialog(
         >
           x
         </button>
-        <h2 id="voice-style-restart-title">{t('dialogs.voiceStyleRestartTitle')}</h2>
-        <p>{t('dialogs.voiceStyleRestartBody')}</p>
-        <p>{t('dialogs.voiceStyleRestartDetail')}</p>
+        <h2 id="voice-style-restart-title">{t(titleKey)}</h2>
+        <p>{t(bodyKey)}</p>
+        <p>{t(detailKey)}</p>
         <div className="modal-actions">
           <button
             type="button"
@@ -57,9 +89,7 @@ export function VoiceStyleRestartDialog(
             onClick={onConfirm}
             disabled={isBusy}
           >
-            {isBusy
-              ? t('dialogs.voiceStyleRestartConfirming')
-              : t('dialogs.voiceStyleRestartConfirm')}
+            {isBusy ? t(confirmingKey) : t(confirmKey)}
           </button>
         </div>
       </section>

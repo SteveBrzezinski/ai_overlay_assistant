@@ -70,6 +70,11 @@ const VOICE_AGENT_GENDER_OPTIONS: Array<{
   { value: 'neutral', labelKey: 'settings.voiceAssistantGenderOptionNeutral' },
 ];
 
+const VOICE_AGENT_MODEL_OPTIONS = [
+  { value: 'gpt-realtime', labelKey: 'settings.voiceAssistantModelOptionRealtime' },
+  { value: 'gpt-realtime-mini', labelKey: 'settings.voiceAssistantModelOptionRealtimeMini' },
+] as const;
+
 function parseBoundedInteger(value: string, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -437,6 +442,26 @@ export default function SettingsView({
                   components={{ wake: <code /> }}
                 />
               </span>
+            </label>
+
+            <label className="settings-field">
+              <span className="info-label">{t('settings.voiceAssistantModel')}</span>
+              <select
+                value={settings.voiceAgentModel}
+                onChange={(event) =>
+                  setSettings({
+                    ...settings,
+                    voiceAgentModel: event.target.value,
+                  })
+                }
+              >
+                {VOICE_AGENT_MODEL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {t(option.labelKey)}
+                  </option>
+                ))}
+              </select>
+              <span className="field-note">{t('settings.voiceAssistantModelNote')}</span>
             </label>
 
             <label className="settings-field">

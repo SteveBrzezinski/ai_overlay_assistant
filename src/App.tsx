@@ -58,6 +58,11 @@ import type { VoiceTimer } from './lib/voiceOverlay';
 
 type AppView = 'dashboard' | 'settings';
 
+type PendingVoiceSessionChange = {
+  settings: AppSettings;
+  kind: 'gender' | 'model' | 'model-and-gender';
+};
+
 export default function App() {
   const [uiState, setUiState] = useState<UiState>('idle');
   const [message, setMessage] = useState(i18n.t('app.ready'));
@@ -101,8 +106,8 @@ export default function App() {
   const [hostedBillingError, setHostedBillingError] = useState<string | null>(null);
   const [isHostedCheckoutBusy, setIsHostedCheckoutBusy] = useState(false);
   const [pendingVoiceSessionRestartReason, setPendingVoiceSessionRestartReason] = useState<string | null>(null);
-  const [pendingVoiceStyleRestartSettings, setPendingVoiceStyleRestartSettings] =
-    useState<AppSettings | null>(null);
+  const [pendingVoiceSessionChange, setPendingVoiceSessionChange] =
+    useState<PendingVoiceSessionChange | null>(null);
   const [timerEditorMode, setTimerEditorMode] = useState<'create' | 'edit' | null>(null);
   const [timerEditorTimer, setTimerEditorTimer] = useState<VoiceTimer | null>(null);
   const [isTimerEditorBusy, setIsTimerEditorBusy] = useState(false);
@@ -226,7 +231,7 @@ export default function App() {
   const persistSettings = async (
     next: AppSettings,
     successMessage = i18n.t('app.settingsSavedFuture'),
-    options?: { restartReason?: string },
+    options?: { restartReason?: string; sessionAction?: 'restart' | 'disconnect' },
   ): Promise<AppSettings> => {
     const validationError = getAssistantNameError(next.assistantName);
     if (validationError) {
@@ -253,10 +258,14 @@ export default function App() {
       setSavedSettings(saved);
       let restartFailed = false;
       try {
-        await voiceRuntime.restartVoiceAgentSession(
-          options?.restartReason ?? 'settings-update',
-          voiceRuntime.assistantActive,
-        );
+        if (options?.sessionAction === 'disconnect') {
+          await voiceRuntime.closeVoiceAgentSession(options.restartReason ?? 'settings-update');
+        } else {
+          await voiceRuntime.restartVoiceAgentSession(
+            options?.restartReason ?? 'settings-update',
+            voiceRuntime.assistantActive,
+          );
+        }
       } catch (voiceError: unknown) {
         const detail = voiceError instanceof Error ? voiceError.message : String(voiceError);
         restartFailed = true;
@@ -530,28 +539,45 @@ export default function App() {
   ]);
 
   const handleSaveSettingsRequest = useCallback(async (): Promise<AppSettings | undefined> => {
-    if (settings.voiceAgentGender !== savedSettings.voiceAgentGender) {
-      setPendingVoiceStyleRestartSettings(settings);
+    const genderChanged = settings.voiceAgentGender !== savedSettings.voiceAgentGender;
+    const modelChanged = settings.voiceAgentModel !== savedSettings.voiceAgentModel;
+
+    if (genderChanged || modelChanged) {
+      setPendingVoiceSessionChange({
+        settings,
+        kind:
+          genderChanged && modelChanged
+            ? 'model-and-gender'
+            : modelChanged
+              ? 'model'
+              : 'gender',
+      });
       return undefined;
     }
 
     return persistSettings(settings);
-  }, [persistSettings, savedSettings.voiceAgentGender, settings]);
+  }, [persistSettings, savedSettings.voiceAgentGender, savedSettings.voiceAgentModel, settings]);
 
   const handleConfirmVoiceStyleRestart = useCallback(async (): Promise<void> => {
-    const pendingSettings = pendingVoiceStyleRestartSettings;
-    if (!pendingSettings) {
+    const pendingChange = pendingVoiceSessionChange;
+    if (!pendingChange) {
       return;
     }
 
     try {
-      await persistSettings(pendingSettings, i18n.t('app.settingsSavedFuture'), {
-        restartReason: 'settings-gender-change',
+      await persistSettings(pendingChange.settings, i18n.t('app.settingsSavedFuture'), {
+        restartReason:
+          pendingChange.kind === 'gender'
+            ? 'settings-gender-change'
+            : pendingChange.kind === 'model'
+              ? 'settings-model-change'
+              : 'settings-model-and-gender-change',
+        sessionAction: pendingChange.kind === 'gender' ? 'restart' : 'disconnect',
       });
     } finally {
-      setPendingVoiceStyleRestartSettings(null);
+      setPendingVoiceSessionChange(null);
     }
-  }, [pendingVoiceStyleRestartSettings, persistSettings]);
+  }, [pendingVoiceSessionChange, persistSettings]);
 
   const {
     assistantTrainingReadyName,
@@ -1273,9 +1299,10 @@ export default function App() {
       />
 
       <VoiceStyleRestartDialog
-        open={pendingVoiceStyleRestartSettings !== null}
+        open={pendingVoiceSessionChange !== null}
+        changeKind={pendingVoiceSessionChange?.kind ?? 'gender'}
         isBusy={isSavingSettings}
-        onClose={() => setPendingVoiceStyleRestartSettings(null)}
+        onClose={() => setPendingVoiceSessionChange(null)}
         onConfirm={() => void handleConfirmVoiceStyleRestart()}
       />
 

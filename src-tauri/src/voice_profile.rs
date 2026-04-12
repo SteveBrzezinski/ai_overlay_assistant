@@ -1,5 +1,6 @@
 use crate::settings::{
-    default_voice_agent_preferred_language, sanitize_voice_agent_gender, AppSettings,
+    default_voice_agent_preferred_language, sanitize_voice_agent_gender,
+    sanitize_voice_agent_model, AppSettings,
 };
 use serde::Serialize;
 
@@ -67,7 +68,7 @@ pub fn build_voice_agent_profile(settings: &AppSettings) -> VoiceAgentProfile {
     VoiceAgentProfile {
         name: sanitize_line(&settings.assistant_name, "AIVA"),
         voice: sanitize_realtime_voice(&settings.voice_agent_voice, "marin"),
-        model: sanitize_line(&settings.voice_agent_model, "gpt-realtime"),
+        model: sanitize_voice_agent_model(settings.voice_agent_model.clone()),
         personality: sanitize_multiline(
             &settings.voice_agent_personality,
             "Composed, technically precise, friendly, and concise.",
