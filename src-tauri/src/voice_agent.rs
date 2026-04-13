@@ -39,6 +39,19 @@ fn build_realtime_session_config(profile: &VoiceAgentProfile, instructions: &str
         "model": profile.model,
         "instructions": instructions,
         "audio": {
+            "input": {
+                "noise_reduction": {
+                    "type": "near_field",
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.72,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 650,
+                    "create_response": true,
+                    "interrupt_response": false,
+                }
+            },
             "output": {
                 "voice": profile.voice,
             }

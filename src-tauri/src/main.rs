@@ -2,8 +2,8 @@
 
 use tauri::Manager;
 use voice_overlay_assistant::{
-    app_icon, background, hotkey, run_controller, settings, timer_audio, voice_tasks,
-    voice_timers,
+    app_icon, audio_output, background, hotkey, run_controller, settings, timer_audio,
+    voice_tasks, voice_timers,
 };
 
 #[tauri::command]
@@ -19,6 +19,7 @@ fn main() {
         .manage(background::AppLifecycleState::default())
         .manage(background::AssistantState::default())
         .manage(hotkey::HotkeyState::default())
+        .manage(audio_output::AudioOutputActivityState::default())
         .manage(run_controller::RunController::default())
         .manage(settings_state)
         .manage(timer_audio::TimerSignalPlayerState::default())

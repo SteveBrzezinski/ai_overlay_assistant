@@ -1,3 +1,4 @@
+use crate::audio_output::AudioOutputActivityGuard;
 use rodio::{
     buffer::SamplesBuffer,
     OutputStream, Sink, Source,
@@ -10,7 +11,7 @@ use std::{
     },
     thread,
 };
-use tauri::State;
+use tauri::{AppHandle, State};
 
 const SAMPLE_RATE: u32 = 44_100;
 const CHANNELS: u16 = 2;
@@ -33,26 +34,27 @@ enum PlayerCommand {
 }
 
 impl TimerSignalPlayerState {
-    pub fn start_loop(&self, tone: &str) -> Result<(), String> {
-        self.sender()?.send(PlayerCommand::StartLoop(tone.to_string())).map_err(|error| {
+    pub fn start_loop(&self, app: &AppHandle, tone: &str) -> Result<(), String> {
+        self.sender(app)?.send(PlayerCommand::StartLoop(tone.to_string())).map_err(|error| {
             format!("Failed to send timer signal start command: {error}")
         })
     }
 
-    pub fn stop(&self) -> Result<(), String> {
-        self.sender()?.send(PlayerCommand::Stop).map_err(|error| {
+    pub fn stop(&self, app: &AppHandle) -> Result<(), String> {
+        self.sender(app)?.send(PlayerCommand::Stop).map_err(|error| {
             format!("Failed to send timer signal stop command: {error}")
         })
     }
 
-    fn sender(&self) -> Result<Sender<PlayerCommand>, String> {
+    fn sender(&self, app: &AppHandle) -> Result<Sender<PlayerCommand>, String> {
         let mut guard = self.command_tx.lock().expect("timer signal state poisoned");
         if let Some(sender) = guard.as_ref() {
             return Ok(sender.clone());
         }
 
         let (command_tx, command_rx) = mpsc::channel::<PlayerCommand>();
-        thread::spawn(move || run_player_thread(command_rx));
+        let app_handle = app.clone();
+        thread::spawn(move || run_player_thread(command_rx, app_handle));
         *guard = Some(command_tx.clone());
         Ok(command_tx)
     }
@@ -62,18 +64,20 @@ impl TimerSignalPlayerState {
 pub fn start_timer_signal_alert_command(
     tone: String,
     state: State<'_, TimerSignalPlayerState>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    state.inner().start_loop(&tone)
+    state.inner().start_loop(&app, &tone)
 }
 
 #[tauri::command]
 pub fn stop_timer_signal_alert_command(
     state: State<'_, TimerSignalPlayerState>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    state.inner().stop()
+    state.inner().stop(&app)
 }
 
-fn run_player_thread(command_rx: Receiver<PlayerCommand>) {
+fn run_player_thread(command_rx: Receiver<PlayerCommand>, app: AppHandle) {
     let mut playback: Option<TimerSignalPlayback> = None;
 
     while let Ok(command) = command_rx.recv() {
@@ -82,7 +86,7 @@ fn run_player_thread(command_rx: Receiver<PlayerCommand>) {
                 if let Some(existing) = playback.take() {
                     existing.sink.stop();
                 }
-                playback = start_loop_playback(&tone).ok();
+                playback = start_loop_playback(&app, &tone).ok();
             }
             PlayerCommand::Stop => {
                 if let Some(existing) = playback.take() {
@@ -96,13 +100,15 @@ fn run_player_thread(command_rx: Receiver<PlayerCommand>) {
 struct TimerSignalPlayback {
     _stream: OutputStream,
     sink: Sink,
+    _activity_guard: AudioOutputActivityGuard,
 }
 
-fn start_loop_playback(tone: &str) -> Result<TimerSignalPlayback, String> {
+fn start_loop_playback(app: &AppHandle, tone: &str) -> Result<TimerSignalPlayback, String> {
     let (stream, handle) =
         OutputStream::try_default().map_err(|error| format!("Failed to open audio output: {error}"))?;
     let sink =
         Sink::try_new(&handle).map_err(|error| format!("Failed to create timer signal sink: {error}"))?;
+    let activity_guard = AudioOutputActivityGuard::activate(app, "timer-signal");
     let samples = build_timer_signal_samples(tone);
     sink.set_volume(0.72);
     sink.append(
@@ -115,6 +121,7 @@ fn start_loop_playback(tone: &str) -> Result<TimerSignalPlayback, String> {
     Ok(TimerSignalPlayback {
         _stream: stream,
         sink,
+        _activity_guard: activity_guard,
     })
 }
 

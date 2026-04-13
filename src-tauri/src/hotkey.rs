@@ -649,6 +649,7 @@ mod windows_impl {
                 &settings,
                 Some(progress),
                 Some(run_access.clone()),
+                Some(&app_handle),
             );
 
             let state = app_handle.state::<HotkeyState>();
@@ -825,6 +826,7 @@ mod windows_impl {
                 &settings,
                 Some(progress),
                 Some(run_access.clone()),
+                Some(&app_handle),
             );
 
             let state = app_handle.state::<HotkeyState>();

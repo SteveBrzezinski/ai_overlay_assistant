@@ -65,6 +65,7 @@ export type RealtimeVoiceAgentCallbacks = {
   onStatus: (status: VoiceAgentStatus) => void;
   onAssistantControlRequest?: (request: { action: 'deactivate'; reason: string }) => void;
   onChatEvent?: (event: RealtimeChatEvent) => void;
+  onRemoteAudioActivityChange?: (active: boolean) => void;
 };
 
 type RealtimeResponseContext = {
@@ -93,6 +94,10 @@ export class RealtimeVoiceAgentController {
   private sessionExpiresAtMs: number | null = null;
   private rotateAfterMute = false;
   private responseContexts = new Map<string, RealtimeResponseContext>();
+  private remoteAudioOutputActive = false;
+  private externalAudioOutputSuppressionActive = false;
+  private resumeListeningAfterOutputSuppression = false;
+  private audioElementCleanup: (() => void) | null = null;
 
   constructor(callbacks: RealtimeVoiceAgentCallbacks) {
     this.callbacks = callbacks;
@@ -149,6 +154,7 @@ export class RealtimeVoiceAgentController {
         this.dataChannel = transport.dataChannel;
         this.audioSender = transport.audioSender;
         this.audioElement = transport.audioElement;
+        this.bindAudioElement(transport.audioElement);
 
         this.setStatus('online_muted', 'Realtime voice session connected. Microphone is muted.');
         this.log('events', 'lifecycle', 'session', 'Realtime data channel opened');
@@ -190,6 +196,15 @@ export class RealtimeVoiceAgentController {
         `Realtime transport was not ready before microphone activation. Recovering session (${reason}).`,
       );
       await this.recoverSession(`${reason}-recover`, true);
+      return;
+    }
+
+    if (this.isAudioOutputSuppressed()) {
+      this.resumeListeningAfterOutputSuppression = true;
+      this.setStatus(
+        'online_muted',
+        'Realtime voice session connected. Microphone is temporarily muted while app audio is playing.',
+      );
       return;
     }
 
@@ -252,6 +267,7 @@ export class RealtimeVoiceAgentController {
     }
 
     this.memoryTracker.reset();
+    this.resumeListeningAfterOutputSuppression = false;
     this.setStatus('online_muted', `Realtime voice session connected. Microphone is muted (${reason}).`);
 
     if (this.rotateAfterMute) {
@@ -270,6 +286,7 @@ export class RealtimeVoiceAgentController {
     this.clearSessionRotationTimer();
     this.rotateAfterMute = false;
     this.sessionExpiresAtMs = null;
+    this.resumeListeningAfterOutputSuppression = false;
 
     if (this.unlistenTaskEvents) {
       await this.unlistenTaskEvents();
@@ -287,6 +304,7 @@ export class RealtimeVoiceAgentController {
     if (this.audioElement) {
       this.audioElement.srcObject = null;
     }
+    this.cleanupAudioElement();
 
     try {
       await this.persistSessionMemory(reason);
@@ -300,6 +318,8 @@ export class RealtimeVoiceAgentController {
     this.audioElement = null;
     this.session = null;
     this.recentMemory = null;
+    this.remoteAudioOutputActive = false;
+    this.externalAudioOutputSuppressionActive = false;
     this.announcedFinalTasks.clear();
     this.responseContexts.clear();
     this.memoryTracker.reset();
@@ -308,6 +328,53 @@ export class RealtimeVoiceAgentController {
 
   observeExternalUserTranscript(transcript: string): void {
     this.memoryTracker.rememberExternalUserTranscript(transcript);
+  }
+
+  setExternalAudioOutputSuppression(active: boolean, reason = 'local-audio-output'): void {
+    if (this.externalAudioOutputSuppressionActive === active) {
+      return;
+    }
+
+    this.externalAudioOutputSuppressionActive = active;
+    void this.syncAudioOutputSuppression(reason);
+  }
+
+  async interruptAssistantSpeech(reason = 'user-barge-in'): Promise<void> {
+    if (!this.isTransportReady()) {
+      return;
+    }
+
+    this.log('events', 'lifecycle', 'assistant interruption', `Interrupting assistant speech (${reason})`);
+    this.resumeListeningAfterOutputSuppression = true;
+
+    try {
+      this.sendRealtimeEvent({ type: 'response.cancel' });
+    } catch (error) {
+      this.log(
+        'events',
+        'error',
+        'assistant interruption cancel failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    try {
+      this.sendRealtimeEvent({ type: 'output_audio_buffer.clear' });
+    } catch (error) {
+      this.log(
+        'events',
+        'error',
+        'assistant interruption clear failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    if (this.audioElement) {
+      this.audioElement.pause();
+      this.audioElement.currentTime = 0;
+    }
+
+    await this.syncAudioOutputSuppression(reason);
   }
 
   async announceExternalSystemEvent(
@@ -344,6 +411,14 @@ export class RealtimeVoiceAgentController {
     }
     if (!this.audioSender) {
       throw new Error('Realtime audio sender is not ready.');
+    }
+    if (this.isAudioOutputSuppressed()) {
+      this.resumeListeningAfterOutputSuppression = true;
+      this.setStatus(
+        'online_muted',
+        'Realtime voice session connected. Microphone is temporarily muted while app audio is playing.',
+      );
+      return;
     }
 
     this.log('events', 'lifecycle', 'microphone', `Activating microphone (${reason})`);
@@ -444,7 +519,11 @@ export class RealtimeVoiceAgentController {
         this.state === 'online_muted'
       ) {
         try {
-          await this.attachMicrophone('system-notification-resume');
+          if (this.isAudioOutputSuppressed()) {
+            this.resumeListeningAfterOutputSuppression = true;
+          } else {
+            await this.attachMicrophone('system-notification-resume');
+          }
         } catch (error) {
           this.log(
             'events',
@@ -808,6 +887,70 @@ export class RealtimeVoiceAgentController {
         track.stop();
       }
       this.inputStream = null;
+    }
+  }
+
+  private bindAudioElement(audioElement: HTMLAudioElement): void {
+    this.cleanupAudioElement();
+
+    const updatePlaybackState = (active: boolean): void => {
+      if (this.remoteAudioOutputActive === active) {
+        return;
+      }
+
+      this.remoteAudioOutputActive = active;
+      this.callbacks.onRemoteAudioActivityChange?.(active);
+      void this.syncAudioOutputSuppression(active ? 'assistant-audio' : 'assistant-audio-ended');
+    };
+
+    const handlePlay = (): void => updatePlaybackState(true);
+    const handleStop = (): void => updatePlaybackState(false);
+
+    audioElement.addEventListener('play', handlePlay);
+    audioElement.addEventListener('playing', handlePlay);
+    audioElement.addEventListener('pause', handleStop);
+    audioElement.addEventListener('ended', handleStop);
+    audioElement.addEventListener('emptied', handleStop);
+
+    this.audioElementCleanup = () => {
+      audioElement.removeEventListener('play', handlePlay);
+      audioElement.removeEventListener('playing', handlePlay);
+      audioElement.removeEventListener('pause', handleStop);
+      audioElement.removeEventListener('ended', handleStop);
+      audioElement.removeEventListener('emptied', handleStop);
+      updatePlaybackState(false);
+    };
+  }
+
+  private cleanupAudioElement(): void {
+    this.audioElementCleanup?.();
+    this.audioElementCleanup = null;
+  }
+
+  private isAudioOutputSuppressed(): boolean {
+    return this.remoteAudioOutputActive || this.externalAudioOutputSuppressionActive;
+  }
+
+  private async syncAudioOutputSuppression(reason: string): Promise<void> {
+    if (this.isAudioOutputSuppressed()) {
+      if (this.state === 'online_listening') {
+        this.resumeListeningAfterOutputSuppression = true;
+        await this.detachMicrophone();
+        this.setStatus(
+          'online_muted',
+          `Realtime voice session connected. Microphone is temporarily muted while app audio is playing (${reason}).`,
+        );
+      }
+      return;
+    }
+
+    if (
+      this.resumeListeningAfterOutputSuppression &&
+      this.state === 'online_muted' &&
+      this.isTransportReady()
+    ) {
+      this.resumeListeningAfterOutputSuppression = false;
+      await this.attachMicrophone(`${reason}-resume`);
     }
   }
 }

@@ -1,4 +1,5 @@
 use crate::{
+    audio_output::AudioOutputActivityGuard,
     hosted_backend::synthesize_speech_with_hosted_backend,
     run_controller::{is_cancelled_error, RunAccess},
     settings::{resolve_openai_api_key, AppSettings},
@@ -24,6 +25,7 @@ use tungstenite::{
     client::IntoClientRequest, http::HeaderValue, stream::MaybeTlsStream, Message as WsMessage,
     WebSocket,
 };
+use tauri::AppHandle;
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini-tts";
 const DEFAULT_REALTIME_MODEL: &str = "gpt-realtime-1.5";
@@ -3038,7 +3040,7 @@ pub fn speak_text(
     options: SpeakTextOptions,
     settings: &AppSettings,
 ) -> Result<SpeakTextResult, String> {
-    speak_text_with_progress(options, settings, None)
+    speak_text_with_progress_and_control(options, settings, None, None, None)
 }
 
 pub fn speak_text_with_progress(
@@ -3046,7 +3048,7 @@ pub fn speak_text_with_progress(
     settings: &AppSettings,
     progress: Option<ProgressCallback>,
 ) -> Result<SpeakTextResult, String> {
-    speak_text_with_progress_and_control(options, settings, progress, None)
+    speak_text_with_progress_and_control(options, settings, progress, None, None)
 }
 
 pub fn speak_text_with_progress_and_control(
@@ -3054,6 +3056,7 @@ pub fn speak_text_with_progress_and_control(
     settings: &AppSettings,
     progress: Option<ProgressCallback>,
     run_access: Option<RunAccess>,
+    app_handle: Option<&AppHandle>,
 ) -> Result<SpeakTextResult, String> {
     let text = options.text.unwrap_or_default().trim().to_string();
     if text.is_empty() {
@@ -3071,6 +3074,11 @@ pub fn speak_text_with_progress_and_control(
     let max_parallel_requests = resolve_parallel_requests(options.max_parallel_requests);
     let first_chunk_leading_silence_ms = options.first_chunk_leading_silence_ms.unwrap_or(0);
     let playback_speed = settings.playback_speed;
+    let _audio_output_guard = if autoplay {
+        app_handle.map(|app| AudioOutputActivityGuard::activate(app, "local-tts-playback"))
+    } else {
+        None
+    };
 
     if settings.ai_provider_mode == "hosted" {
         return speak_text_with_hosted_backend(

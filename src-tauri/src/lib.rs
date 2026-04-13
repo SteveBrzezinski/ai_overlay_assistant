@@ -1,4 +1,5 @@
 pub mod app_icon;
+pub mod audio_output;
 pub mod background;
 pub mod hosted_backend;
 pub mod hotkey;
@@ -18,6 +19,7 @@ pub mod voice_tasks;
 pub mod voice_tools;
 
 mod commands {
+    use super::audio_output::AudioOutputActivityGuard;
     use super::run_controller::{CancelResult, PauseResumeResult, RunController};
     use super::selection_capture::{capture_selected_text, CaptureOptions, CaptureResult};
     use super::settings::{
@@ -28,7 +30,7 @@ mod commands {
         AppendSttDebugLogResult, TranscribeChatAudioRequest, TranscribeChatAudioResult,
     };
     use super::translation::{translate_text, TranslateTextOptions, TranslateTextResult};
-    use super::tts::{speak_text, SpeakTextOptions, SpeakTextResult};
+    use super::tts::{speak_text, speak_text_with_progress_and_control, SpeakTextOptions, SpeakTextResult};
     use serde::Serialize;
     use tauri::{AppHandle, Emitter, State};
 
@@ -80,7 +82,13 @@ mod commands {
     pub fn speak_text_command(
         options: SpeakTextOptions,
         settings: State<'_, SettingsState>,
+        app: AppHandle,
     ) -> Result<SpeakTextResult, String> {
+        let _audio_output_guard = if options.autoplay.unwrap_or(true) {
+            Some(AudioOutputActivityGuard::activate(&app, "local-tts-command"))
+        } else {
+            None
+        };
         speak_text(options, &settings.get())
     }
 
@@ -162,6 +170,7 @@ mod commands {
         capture_options: Option<CaptureOptions>,
         speak_options: Option<SpeakTextOptions>,
         settings: State<'_, SettingsState>,
+        app: AppHandle,
     ) -> Result<CaptureAndSpeakResult, String> {
         let capture = capture_selected_text(capture_options)?;
         if capture.text.trim().is_empty() {
@@ -181,7 +190,7 @@ mod commands {
             max_parallel_requests: None,
             first_chunk_leading_silence_ms: None,
         });
-        let speech = speak_text(
+        let speech = speak_text_with_progress_and_control(
             SpeakTextOptions {
                 text: Some(capture.text.clone()),
                 voice: base_speak.voice,
@@ -194,6 +203,9 @@ mod commands {
                 first_chunk_leading_silence_ms: Some(0),
             },
             &app_settings,
+            None,
+            None,
+            Some(&app),
         )?;
         Ok(CaptureAndSpeakResult {
             captured_text: capture.text,
@@ -208,6 +220,7 @@ mod commands {
         capture_options: Option<CaptureOptions>,
         translate_options: Option<TranslateTextOptions>,
         settings: State<'_, SettingsState>,
+        app: AppHandle,
     ) -> Result<CaptureAndTranslateResult, String> {
         let capture = capture_selected_text(capture_options)?;
         if capture.text.trim().is_empty() {
@@ -233,7 +246,7 @@ mod commands {
             },
             &app_settings,
         )?;
-        let speech = speak_text(
+        let speech = speak_text_with_progress_and_control(
             SpeakTextOptions {
                 text: Some(translation.text.clone()),
                 voice: None,
@@ -246,6 +259,9 @@ mod commands {
                 first_chunk_leading_silence_ms: Some(0),
             },
             &app_settings,
+            None,
+            None,
+            Some(&app),
         )?;
         Ok(CaptureAndTranslateResult {
             captured_text: capture.text,

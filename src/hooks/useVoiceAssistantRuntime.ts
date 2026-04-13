@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   appendSttDebugLog,
   emitVoiceChatState,
+  onAppAudioOutputState,
   onAssistantControlRequest,
   onLiveSttControl,
   onVoiceTimerEvent,
@@ -95,6 +96,8 @@ export function useVoiceAssistantRuntime(
   const [chatMessages, setChatMessages] = useState<VoiceChatMessage[]>([]);
   const [chatStatusText, setChatStatusText] = useState('Chat bereit.');
   const [isChatAssistantResponding, setIsChatAssistantResponding] = useState(false);
+  const [backendAudioOutputActive, setBackendAudioOutputActive] = useState(false);
+  const [assistantPlaybackActive, setAssistantPlaybackActive] = useState(false);
   const liveSttControllerRef = useRef<LiveSttController | null>(null);
   const realtimeVoiceAgentRef = useRef<RealtimeVoiceAgentController | null>(null);
   const startLiveTranscriptionRef = useRef<(options?: { activateImmediately?: boolean }) => Promise<void>>(
@@ -202,6 +205,31 @@ export function useVoiceAssistantRuntime(
     publishChatStateRef.current = publishChatState;
   }, [ensureSavedSettings, publishChatState]);
 
+  useEffect(() => {
+    let unlistenAudioOutput: (() => void | Promise<void>) | undefined;
+
+    void onAppAudioOutputState((state) => {
+      setBackendAudioOutputActive(state.active);
+    }).then((cleanup) => {
+      unlistenAudioOutput = cleanup;
+    });
+
+    return () => {
+      void unlistenAudioOutput?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    liveSttControllerRef.current?.setOutputSuppressionState(
+      backendAudioOutputActive || assistantPlaybackActive,
+      assistantPlaybackActive && !backendAudioOutputActive,
+    );
+  }, [assistantPlaybackActive, backendAudioOutputActive]);
+
+  useEffect(() => {
+    realtimeVoiceAgentRef.current?.setExternalAudioOutputSuppression(backendAudioOutputActive);
+  }, [backendAudioOutputActive]);
+
   const applyAssistantState = useCallback((snapshot: AssistantStateSnapshot): void => {
     setAssistantActive(snapshot.active);
     setAssistantWakePhraseState(snapshot.wakePhrase);
@@ -238,21 +266,27 @@ export function useVoiceAssistantRuntime(
       onChatEvent: (event) => {
         handleChatEvent(event);
       },
+      onRemoteAudioActivityChange: (active) => {
+        setAssistantPlaybackActive(active);
+      },
     });
 
     realtimeVoiceAgentRef.current = controller;
+    controller.setExternalAudioOutputSuppression(backendAudioOutputActive);
     try {
       await controller.connect();
     } catch {
       realtimeVoiceAgentRef.current = null;
+      setAssistantPlaybackActive(false);
     }
-  }, [handleChatEvent, handleVoiceAgentStatus]);
+  }, [backendAudioOutputActive, handleChatEvent, handleVoiceAgentStatus]);
 
   const stopVoiceAgent = useCallback(async (reason = 'deactivate'): Promise<void> => {
     if (realtimeVoiceAgentRef.current) {
       await realtimeVoiceAgentRef.current.disconnect(reason);
       realtimeVoiceAgentRef.current = null;
     }
+    setAssistantPlaybackActive(false);
     setVoiceAgentState('idle');
     setVoiceAgentDetail(i18n.t('voiceRuntime.voiceSessionIdle'));
     setVoiceAgentSession(null);
@@ -337,6 +371,10 @@ export function useVoiceAssistantRuntime(
     await startVoiceAgent();
 
     const controller = new LiveSttController();
+    controller.setOutputSuppressionState(
+      backendAudioOutputActive || assistantPlaybackActive,
+      assistantPlaybackActive && !backendAudioOutputActive,
+    );
     liveSttControllerRef.current = controller;
     const sessionId = `stt-live-${Date.now()}`;
     setLiveTranscriptionSessionId(sessionId);
@@ -389,6 +427,11 @@ export function useVoiceAssistantRuntime(
               realtimeVoiceAgentRef.current?.observeExternalUserTranscript(snapshot.transcript);
             }
           },
+          onOutputInterruption: ({ reason }) => {
+            if (assistantPlaybackActive) {
+              void realtimeVoiceAgentRef.current?.interruptAssistantSpeech(reason);
+            }
+          },
         },
       );
     } catch (error: unknown) {
@@ -398,7 +441,14 @@ export function useVoiceAssistantRuntime(
         i18n.t('voiceRuntime.failedToStartLiveTranscription', { detail }),
       );
     }
-  }, [applyAssistantState, ensureSavedSettings, savedSettings, startVoiceAgent]);
+  }, [
+    applyAssistantState,
+    assistantPlaybackActive,
+    backendAudioOutputActive,
+    ensureSavedSettings,
+    savedSettings,
+    startVoiceAgent,
+  ]);
 
   const stopLiveTranscription = useCallback(async (): Promise<void> => {
     await realtimeVoiceAgentRef.current?.mute('stop-live-transcription');

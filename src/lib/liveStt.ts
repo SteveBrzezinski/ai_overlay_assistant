@@ -63,6 +63,7 @@ export type LiveSttCallbacks = {
   onStatus: (message: string) => void;
   onProviderSnapshot: (snapshot: ProviderSnapshot) => void;
   onAssistantStateChange: (snapshot: AssistantStateSnapshot) => void;
+  onOutputInterruption: (payload: { transcript: string; reason: string }) => void;
 };
 
 export class LiveSttController {
@@ -72,6 +73,8 @@ export class LiveSttController {
   private running = false;
   private assistantActive = false;
   private cueCooldownUntilMs = 0;
+  private outputSuppressionActive = false;
+  private outputSuppressionAllowInterruption = false;
 
   start(config: LiveSttConfig, callbacks: LiveSttCallbacks): Promise<void> {
     if (this.running) {
@@ -163,6 +166,11 @@ export class LiveSttController {
     this.restartRecognitionForCurrentMode();
   }
 
+  setOutputSuppressionState(active: boolean, allowInterruption = false): void {
+    this.outputSuppressionActive = active;
+    this.outputSuppressionAllowInterruption = active && allowInterruption;
+  }
+
   private startWebSpeechRecognition(): void {
     const ctor = getSpeechRecognitionConstructor();
 
@@ -226,6 +234,20 @@ export class LiveSttController {
 
     const trimmed = transcript.trim();
     if (!trimmed) {
+      return;
+    }
+
+    if (this.outputSuppressionActive) {
+      const interruptionReason = this.outputSuppressionAllowInterruption
+        ? this.evaluateOutputInterruption(trimmed, isFinal)
+        : null;
+
+      if (interruptionReason) {
+        this.callbacks?.onOutputInterruption({
+          transcript: trimmed,
+          reason: interruptionReason,
+        });
+      }
       return;
     }
 
@@ -353,5 +375,29 @@ export class LiveSttController {
       this.config?.assistantCueCooldownMs,
       DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
     );
+  }
+
+  private evaluateOutputInterruption(transcript: string, isFinal: boolean): string | null {
+    if (!isFinal) {
+      return null;
+    }
+
+    const wakeEvaluation = evaluateCuePhrase({
+      transcript,
+      kind: 'wake',
+      cueWord: 'hey',
+      aiName: this.currentAssistantName(),
+      trainedPhrases: this.config?.wakeSamples ?? [],
+      trainedNameSamples: this.config?.nameSamples ?? [],
+      baseThreshold: Math.min(this.currentWakeThreshold() + 14, ASSISTANT_MATCH_THRESHOLD_MAX),
+      isFinal: true,
+      cooldownRemainingMs: 0,
+    });
+
+    if (wakeEvaluation.matched) {
+      return 'wake-phrase';
+    }
+
+    return null;
   }
 }

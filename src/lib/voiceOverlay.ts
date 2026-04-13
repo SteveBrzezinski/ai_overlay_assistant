@@ -418,6 +418,11 @@ export type VoiceChatSubmitEvent = {
   text: string;
 };
 
+export type AppAudioOutputState = {
+  active: boolean;
+  sources: string[];
+};
+
 export type VoiceChatSyncRequestEvent = {
   source: string;
 };
@@ -448,6 +453,7 @@ const ASSISTANT_CONTROL_EVENT = 'assistant-control-request';
 const VOICE_CHAT_STATE_EVENT = 'voice-chat-state';
 const VOICE_CHAT_SYNC_REQUEST_EVENT = 'voice-chat-sync-request';
 const VOICE_CHAT_SUBMIT_EVENT = 'voice-chat-submit';
+const APP_AUDIO_OUTPUT_EVENT = 'app-audio-output-state';
 
 export async function getAppStatus(): Promise<string> {
   return invoke<string>('app_status');
@@ -659,6 +665,12 @@ export async function onVoiceChatSubmitRequest(
   callback: (payload: VoiceChatSubmitEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<VoiceChatSubmitEvent>(VOICE_CHAT_SUBMIT_EVENT, (event) => callback(event.payload));
+}
+
+export async function onAppAudioOutputState(
+  callback: (state: AppAudioOutputState) => void,
+): Promise<UnlistenFn> {
+  return listen<AppAudioOutputState>(APP_AUDIO_OUTPUT_EVENT, (event) => callback(event.payload));
 }
 
 export async function transcribeChatAudio(
