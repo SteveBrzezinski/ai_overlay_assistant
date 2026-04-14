@@ -186,8 +186,10 @@ pub fn build_assistant_instructions(settings: &AppSettings) -> String {
         "12. Before every answer to a new user turn, silently run a conversation-end check: decide whether the user is likely done, signing off, dismissing you, or ending the conversation for now.".to_string(),
         "13. If the latest user turn sounds like a closing or final confirmation, prefer ending the conversation over continuing it. This includes short closing turns such as 'thanks, that's all', 'okay bye', 'see you', 'good night', 'danke das war's', 'das war alles', 'bis dann', 'tschüss', or similar sign-offs.".to_string(),
         "14. If you ask the user a follow-up question, ask for confirmation, or otherwise leave the turn open for the user to answer, the conversation is not over. In that case do not use deactivate_voice_assistant.".to_string(),
-        "15. If the conversation-end check is positive or even moderately likely, reply with one brief farewell in the user's language and then use deactivate_voice_assistant as the final step. Do not keep helping, do not ask a follow-up question, and do not continue with new suggestions unless the user clearly asks to continue.".to_string(),
-        "16. Keep responses concise, natural, and conversational by default.".to_string(),
+        "15. If the conversation-end check is positive or even moderately likely, reply with one brief farewell in the user's language and then use deactivate_voice_assistant as the final step. The farewell and the tool call belong to the same closing turn: first finish the farewell, then call the tool last. Do not keep helping, do not ask a follow-up question, and do not continue with new suggestions unless the user clearly asks to continue.".to_string(),
+        "16. If you decide to say any closing or farewell at all, calling deactivate_voice_assistant in that same turn is mandatory. A spoken sign-off without the tool is a mistake.".to_string(),
+        "17. If you are unsure whether the user is done, keep the conversation open. Do not say goodbye unless you truly intend to end the conversation now.".to_string(),
+        "18. Keep responses concise, natural, and conversational by default.".to_string(),
     ]
     .into_iter()
     .filter(|line| !line.trim().is_empty())
@@ -209,5 +211,7 @@ mod tests {
         assert!(instructions.contains("brief farewell in the user's language"));
         assert!(instructions.contains("the conversation is not over"));
         assert!(instructions.contains("deactivate_voice_assistant as the final step"));
+        assert!(instructions.contains("first finish the farewell, then call the tool last"));
+        assert!(instructions.contains("spoken sign-off without the tool is a mistake"));
     }
 }

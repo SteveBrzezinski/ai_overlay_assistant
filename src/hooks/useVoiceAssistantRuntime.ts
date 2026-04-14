@@ -77,7 +77,7 @@ export function useVoiceAssistantRuntime(
   const [assistantStateDetail, setAssistantStateDetail] = useState(
     i18n.t('voiceRuntime.initializingWakeListener'),
   );
-  const [assistantWakePhraseState, setAssistantWakePhraseState] = useState('Hey AIVA');
+  const [assistantWakePhraseState, setAssistantWakePhraseState] = useState('AIVA');
   const [liveTranscript, setLiveTranscript] = useState('');
   const [sttProviderSnapshots, setSttProviderSnapshots] = useState<ProviderSnapshotMap>({});
   const [liveTranscriptionSessionId, setLiveTranscriptionSessionId] = useState('');
@@ -241,6 +241,40 @@ export function useVoiceAssistantRuntime(
     }
   }, []);
 
+  const applyAssistantInactiveUi = useCallback((source: string): void => {
+    const normalizedSource = normalizeAssistantSource(source);
+    setAssistantActive(false);
+    setAssistantStateDetail(
+      i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source: normalizedSource }),
+    );
+    setLiveTranscriptionStatus(
+      i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source: normalizedSource }),
+    );
+    setLiveTranscript('');
+    setLastSttActiveTranscript('');
+  }, []);
+
+  const deactivateAssistantVoiceInternal = useCallback(async (
+    source = 'manual',
+    options?: { immediate?: boolean },
+  ): Promise<void> => {
+    const normalizedSource = normalizeAssistantSource(source);
+    if (options?.immediate !== false) {
+      await realtimeVoiceAgentRef.current?.interruptAssistantSpeech(`${normalizedSource}-deactivate`, {
+        muteOutputUntilResume: true,
+        resumeListeningAfter: false,
+      });
+    }
+
+    if (liveSttControllerRef.current) {
+      liveSttControllerRef.current.manualDeactivate(normalizedSource);
+      return;
+    }
+
+    await realtimeVoiceAgentRef.current?.mute(source);
+    applyAssistantInactiveUi(source);
+  }, [applyAssistantInactiveUi]);
+
   const startVoiceAgent = useCallback(async (): Promise<void> => {
     if (realtimeVoiceAgentRef.current) {
       await realtimeVoiceAgentRef.current.connect();
@@ -260,7 +294,9 @@ export function useVoiceAssistantRuntime(
       },
       onAssistantControlRequest: ({ action, reason }) => {
         if (action === 'deactivate') {
-          void deactivateAssistantVoiceRef.current(reason || 'assistant-requested');
+          void deactivateAssistantVoiceInternal(reason || 'assistant-requested', {
+            immediate: false,
+          });
         }
       },
       onChatEvent: (event) => {
@@ -279,7 +315,12 @@ export function useVoiceAssistantRuntime(
       realtimeVoiceAgentRef.current = null;
       setAssistantPlaybackActive(false);
     }
-  }, [backendAudioOutputActive, handleChatEvent, handleVoiceAgentStatus]);
+  }, [
+    backendAudioOutputActive,
+    deactivateAssistantVoiceInternal,
+    handleChatEvent,
+    handleVoiceAgentStatus,
+  ]);
 
   const stopVoiceAgent = useCallback(async (reason = 'deactivate'): Promise<void> => {
     if (realtimeVoiceAgentRef.current) {
@@ -308,23 +349,8 @@ export function useVoiceAssistantRuntime(
   }, [startVoiceAgent]);
 
   const deactivateAssistantVoice = useCallback(async (source = 'manual'): Promise<void> => {
-    const normalizedSource = normalizeAssistantSource(source);
-    if (liveSttControllerRef.current) {
-      liveSttControllerRef.current.manualDeactivate(normalizedSource);
-      return;
-    }
-
-    await realtimeVoiceAgentRef.current?.mute(source);
-    setAssistantActive(false);
-    setAssistantStateDetail(
-      i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source: normalizedSource }),
-    );
-    setLiveTranscriptionStatus(
-      i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source: normalizedSource }),
-    );
-    setLiveTranscript('');
-    setLastSttActiveTranscript('');
-  }, []);
+    await deactivateAssistantVoiceInternal(source, { immediate: true });
+  }, [deactivateAssistantVoiceInternal]);
 
   const restartVoiceAgentSession = useCallback(async (
     reason: string,
@@ -386,7 +412,7 @@ export function useVoiceAssistantRuntime(
     setLastSttDebugLogPath('');
     setLastSttProvider('webview2');
     setLastSttActiveTranscript('');
-    setAssistantWakePhraseState(`Hey ${activeSettings.assistantName}`);
+    setAssistantWakePhraseState(activeSettings.assistantName);
     setAssistantStateDetail(i18n.t('voiceRuntime.startingWakeListener'));
     setIsLiveTranscribing(true);
 
@@ -811,7 +837,7 @@ export function useVoiceAssistantRuntime(
     () =>
       isLiveTranscribing
         ? assistantWakePhraseState
-        : `Hey ${settings.assistantName || 'AIVA'}`,
+        : settings.assistantName || 'AIVA',
     [assistantWakePhraseState, isLiveTranscribing, settings.assistantName],
   );
 

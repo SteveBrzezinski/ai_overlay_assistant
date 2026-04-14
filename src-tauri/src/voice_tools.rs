@@ -297,7 +297,7 @@ pub fn realtime_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": "deactivate_voice_assistant",
-            "description": "Switches the voice agent back to online_muted. Use this proactively when the latest user turn indicates they are done, signing off, dismissing you, or ending the conversation. After one brief farewell, call this as the final step. Never use it right after asking the user a question or when their reply is still expected.",
+            "description": "Switches the voice agent back to online_muted. Use this proactively when the latest user turn indicates they are done, signing off, dismissing you, or ending the conversation. First finish one brief farewell, then call this as the final step of the same closing turn. If you say any goodbye or closing sign-off, this tool is mandatory in that same turn. Never use it right after asking the user a question or when their reply is still expected.",
             "parameters": {
                 "type": "object",
                 "properties": {

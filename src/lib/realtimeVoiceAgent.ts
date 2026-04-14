@@ -95,9 +95,13 @@ export class RealtimeVoiceAgentController {
   private rotateAfterMute = false;
   private responseContexts = new Map<string, RealtimeResponseContext>();
   private remoteAudioOutputActive = false;
+  private serverResponseActive = false;
+  private serverAudioBufferActive = false;
+  private audioOutputEnabled = true;
   private externalAudioOutputSuppressionActive = false;
   private resumeListeningAfterOutputSuppression = false;
   private audioElementCleanup: (() => void) | null = null;
+  private pendingGracefulDeactivateReason: string | null = null;
 
   constructor(callbacks: RealtimeVoiceAgentCallbacks) {
     this.callbacks = callbacks;
@@ -155,6 +159,7 @@ export class RealtimeVoiceAgentController {
         this.audioSender = transport.audioSender;
         this.audioElement = transport.audioElement;
         this.bindAudioElement(transport.audioElement);
+        this.setAudioOutputEnabled(true, 'connect');
 
         this.setStatus('online_muted', 'Realtime voice session connected. Microphone is muted.');
         this.log('events', 'lifecycle', 'session', 'Realtime data channel opened');
@@ -199,7 +204,9 @@ export class RealtimeVoiceAgentController {
       return;
     }
 
-    if (this.isAudioOutputSuppressed()) {
+    this.setAudioOutputEnabled(true, `${reason}-resume-output`);
+
+    if (this.isMicrophoneInputSuppressed()) {
       this.resumeListeningAfterOutputSuppression = true;
       this.setStatus(
         'online_muted',
@@ -287,6 +294,10 @@ export class RealtimeVoiceAgentController {
     this.rotateAfterMute = false;
     this.sessionExpiresAtMs = null;
     this.resumeListeningAfterOutputSuppression = false;
+    this.pendingGracefulDeactivateReason = null;
+    this.serverResponseActive = false;
+    this.serverAudioBufferActive = false;
+    this.audioOutputEnabled = true;
 
     if (this.unlistenTaskEvents) {
       await this.unlistenTaskEvents();
@@ -319,6 +330,8 @@ export class RealtimeVoiceAgentController {
     this.session = null;
     this.recentMemory = null;
     this.remoteAudioOutputActive = false;
+    this.serverResponseActive = false;
+    this.serverAudioBufferActive = false;
     this.externalAudioOutputSuppressionActive = false;
     this.announcedFinalTasks.clear();
     this.responseContexts.clear();
@@ -339,40 +352,52 @@ export class RealtimeVoiceAgentController {
     void this.syncAudioOutputSuppression(reason);
   }
 
-  async interruptAssistantSpeech(reason = 'user-barge-in'): Promise<void> {
+  async interruptAssistantSpeech(
+    reason = 'user-barge-in',
+    options?: { muteOutputUntilResume?: boolean; resumeListeningAfter?: boolean },
+  ): Promise<void> {
     if (!this.isTransportReady()) {
       return;
     }
 
+    if (!this.serverResponseActive && !this.serverAudioBufferActive && !this.remoteAudioOutputActive) {
+      return;
+    }
+
     this.log('events', 'lifecycle', 'assistant interruption', `Interrupting assistant speech (${reason})`);
-    this.resumeListeningAfterOutputSuppression = true;
+    this.resumeListeningAfterOutputSuppression = options?.resumeListeningAfter ?? true;
+    this.pendingGracefulDeactivateReason = null;
+    this.setAudioOutputEnabled(!(options?.muteOutputUntilResume ?? false), reason);
 
-    try {
-      this.sendRealtimeEvent({ type: 'response.cancel' });
-    } catch (error) {
-      this.log(
-        'events',
-        'error',
-        'assistant interruption cancel failed',
-        error instanceof Error ? error.message : String(error),
-      );
+    if (this.serverResponseActive) {
+      this.serverResponseActive = false;
+      try {
+        this.sendRealtimeEvent({ type: 'response.cancel' });
+      } catch (error) {
+        this.log(
+          'events',
+          'error',
+          'assistant interruption cancel failed',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
 
-    try {
-      this.sendRealtimeEvent({ type: 'output_audio_buffer.clear' });
-    } catch (error) {
-      this.log(
-        'events',
-        'error',
-        'assistant interruption clear failed',
-        error instanceof Error ? error.message : String(error),
-      );
+    if (this.serverAudioBufferActive || this.remoteAudioOutputActive) {
+      this.serverAudioBufferActive = false;
+      try {
+        this.sendRealtimeEvent({ type: 'output_audio_buffer.clear' });
+      } catch (error) {
+        this.log(
+          'events',
+          'error',
+          'assistant interruption clear failed',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
 
-    if (this.audioElement) {
-      this.audioElement.pause();
-      this.audioElement.currentTime = 0;
-    }
+    this.setRemoteAudioOutputActive(false);
 
     await this.syncAudioOutputSuppression(reason);
   }
@@ -412,7 +437,7 @@ export class RealtimeVoiceAgentController {
     if (!this.audioSender) {
       throw new Error('Realtime audio sender is not ready.');
     }
-    if (this.isAudioOutputSuppressed()) {
+    if (this.isMicrophoneInputSuppressed()) {
       this.resumeListeningAfterOutputSuppression = true;
       this.setStatus(
         'online_muted',
@@ -449,6 +474,13 @@ export class RealtimeVoiceAgentController {
       return;
     }
 
+    const errorRecord = event.type === 'error' ? asRecord(event.error) : null;
+    const errorCode = typeof errorRecord?.code === 'string' ? errorRecord.code : '';
+    if (errorCode === 'response_cancel_not_active') {
+      this.serverResponseActive = false;
+      return;
+    }
+
     this.log('events', 'server', `server -> ${firstString(event.type, 'unknown')}`, event);
     this.memoryTracker.captureMemoryFromEvent(event);
     const responseContext = this.captureResponseContext(event);
@@ -457,9 +489,29 @@ export class RealtimeVoiceAgentController {
       this.captureSessionLifetime(event);
     }
 
+    if (event.type === 'response.created') {
+      this.serverResponseActive = true;
+    }
+
+    if (event.type === 'output_audio_buffer.started') {
+      this.serverAudioBufferActive = true;
+      if (this.audioOutputEnabled) {
+        this.setRemoteAudioOutputActive(true);
+        void this.resumeAudioElementPlayback('output-audio-buffer-started');
+      }
+    }
+
+    if (event.type === 'output_audio_buffer.stopped') {
+      this.serverAudioBufferActive = false;
+      this.setRemoteAudioOutputActive(false);
+      this.tryFinalizeGracefulDeactivate('output-audio-buffer-stopped');
+    }
+
     if (event.type === 'error') {
-      const errorRecord = asRecord(event.error);
-      const errorCode = typeof errorRecord?.code === 'string' ? errorRecord.code : '';
+      if (errorCode === 'response_cancel_not_active') {
+        this.serverResponseActive = false;
+        return;
+      }
       if (responseContext?.channel === 'chat') {
         this.callbacks.onChatEvent?.({
           type: 'assistant-error',
@@ -474,6 +526,7 @@ export class RealtimeVoiceAgentController {
     }
 
     if (event.type === 'response.done') {
+      this.serverResponseActive = false;
       const responseRecord = asRecord(event.response);
       const responseId = firstString(responseRecord?.id);
       const output = Array.isArray(responseRecord?.output) ? responseRecord.output : [];
@@ -485,10 +538,14 @@ export class RealtimeVoiceAgentController {
         .join('\n\n')
         .trim();
       let executedToolCall = false;
+      let gracefulDeactivateReason: string | null = null;
       for (const item of output) {
         if (isToolCallItem(item)) {
           executedToolCall = true;
-          await this.executeToolCall(item, responseContext);
+          const toolOutcome = await this.executeToolCall(item, responseContext);
+          if (toolOutcome.gracefulDeactivateReason) {
+            gracefulDeactivateReason = toolOutcome.gracefulDeactivateReason;
+          }
         }
       }
 
@@ -512,11 +569,10 @@ export class RealtimeVoiceAgentController {
         this.responseContexts.delete(responseId);
       }
 
-      if (!executedToolCall && looksLikeAssistantFarewell(assistantText)) {
-        this.callbacks.onAssistantControlRequest?.({
-          action: 'deactivate',
-          reason: 'assistant-farewell-fallback',
-        });
+      if (gracefulDeactivateReason) {
+        this.requestGracefulDeactivate(gracefulDeactivateReason);
+      } else if (!executedToolCall && looksLikeAssistantFarewell(assistantText)) {
+        this.requestGracefulDeactivate('assistant-farewell-fallback');
       }
 
       if (
@@ -525,7 +581,7 @@ export class RealtimeVoiceAgentController {
         this.state === 'online_muted'
       ) {
         try {
-          if (this.isAudioOutputSuppressed()) {
+          if (this.isMicrophoneInputSuppressed()) {
             this.resumeListeningAfterOutputSuppression = true;
           } else {
             await this.attachMicrophone('system-notification-resume');
@@ -539,13 +595,15 @@ export class RealtimeVoiceAgentController {
           );
         }
       }
+
+      this.tryFinalizeGracefulDeactivate('response-done');
     }
   }
 
   private async executeToolCall(
     item: ToolCallItem,
     responseContext?: RealtimeResponseContext | null,
-  ): Promise<void> {
+  ): Promise<{ gracefulDeactivateReason?: string }> {
     let parsedArguments: Record<string, unknown> = {};
     try {
       parsedArguments = item.arguments ? (JSON.parse(item.arguments) as Record<string, unknown>) : {};
@@ -588,6 +646,8 @@ export class RealtimeVoiceAgentController {
       this.memoryTracker.rememberToolEvent(`Tool ${item.name} failed: ${detail}`);
     }
 
+    let gracefulDeactivateReason: string | undefined;
+
     try {
       this.sendRealtimeEvent({
         type: 'conversation.item.create',
@@ -597,20 +657,22 @@ export class RealtimeVoiceAgentController {
           output: JSON.stringify(toolResult),
         },
       });
-      this.sendRealtimeEvent(
-        responseContext?.channel === 'chat'
-          ? {
-              type: 'response.create',
-              response: {
-                metadata: {
-                  channel: 'chat',
-                  messageId: responseContext.messageId ?? null,
+      if (item.name !== 'deactivate_voice_assistant') {
+        this.sendRealtimeEvent(
+          responseContext?.channel === 'chat'
+            ? {
+                type: 'response.create',
+                response: {
+                  metadata: {
+                    channel: 'chat',
+                    messageId: responseContext.messageId ?? null,
+                  },
+                  output_modalities: ['text'],
                 },
-                output_modalities: ['text'],
-              },
-            }
-          : { type: 'response.create' },
-      );
+              }
+            : { type: 'response.create' },
+        );
+      }
     } catch (error) {
       this.log('events', 'error', 'tool response dispatch failed', error instanceof Error ? error.message : String(error));
       if (responseContext?.channel === 'chat') {
@@ -623,11 +685,12 @@ export class RealtimeVoiceAgentController {
     }
 
     if (item.name === 'deactivate_voice_assistant') {
-      this.callbacks.onAssistantControlRequest?.({
-        action: 'deactivate',
-        reason: normalizeMemoryText(firstString(toolResult.reason, toolResult.message, 'assistant-requested')) || 'assistant-requested',
-      });
+      gracefulDeactivateReason =
+        normalizeMemoryText(firstString(toolResult.reason, toolResult.message, 'assistant-requested')) ||
+        'assistant-requested';
     }
+
+    return gracefulDeactivateReason ? { gracefulDeactivateReason } : {};
   }
 
   private handleVoiceTask(task: VoiceTask): void {
@@ -900,13 +963,11 @@ export class RealtimeVoiceAgentController {
     this.cleanupAudioElement();
 
     const updatePlaybackState = (active: boolean): void => {
-      if (this.remoteAudioOutputActive === active) {
+      if (!this.audioOutputEnabled && active) {
         return;
       }
 
-      this.remoteAudioOutputActive = active;
-      this.callbacks.onRemoteAudioActivityChange?.(active);
-      void this.syncAudioOutputSuppression(active ? 'assistant-audio' : 'assistant-audio-ended');
+      this.setRemoteAudioOutputActive(active);
     };
 
     const handlePlay = (): void => updatePlaybackState(true);
@@ -933,12 +994,95 @@ export class RealtimeVoiceAgentController {
     this.audioElementCleanup = null;
   }
 
-  private isAudioOutputSuppressed(): boolean {
-    return this.remoteAudioOutputActive || this.externalAudioOutputSuppressionActive;
+  private setRemoteAudioOutputActive(active: boolean): void {
+    if (this.remoteAudioOutputActive === active) {
+      return;
+    }
+
+    this.remoteAudioOutputActive = active;
+    this.callbacks.onRemoteAudioActivityChange?.(active);
+    void this.syncAudioOutputSuppression(active ? 'assistant-audio' : 'assistant-audio-ended');
+    if (!active) {
+      this.tryFinalizeGracefulDeactivate('audio-element-stopped');
+    }
+  }
+
+  private setAudioOutputEnabled(enabled: boolean, reason: string): void {
+    this.audioOutputEnabled = enabled;
+
+    if (this.audioElement) {
+      this.audioElement.muted = !enabled;
+    }
+
+    if (!enabled) {
+      this.setRemoteAudioOutputActive(false);
+      return;
+    }
+
+    void this.resumeAudioElementPlayback(reason);
+  }
+
+  private async resumeAudioElementPlayback(reason: string): Promise<void> {
+    if (!this.audioElement || !this.audioOutputEnabled) {
+      return;
+    }
+
+    if (!this.audioElement.srcObject) {
+      return;
+    }
+
+    this.audioElement.muted = false;
+    if (!this.audioElement.paused) {
+      return;
+    }
+
+    try {
+      await this.audioElement.play();
+    } catch (error) {
+      this.log(
+        'events',
+        'lifecycle',
+        'assistant audio resume',
+        `Audio output stayed paused during ${reason}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private requestGracefulDeactivate(reason: string): void {
+    this.pendingGracefulDeactivateReason =
+      normalizeMemoryText(reason) || 'assistant-requested';
+    this.log('events', 'lifecycle', 'assistant graceful deactivate', `Queued graceful deactivate (${this.pendingGracefulDeactivateReason})`);
+    this.tryFinalizeGracefulDeactivate('graceful-deactivate-requested');
+  }
+
+  private tryFinalizeGracefulDeactivate(trigger: string): void {
+    if (!this.pendingGracefulDeactivateReason) {
+      return;
+    }
+
+    if (this.serverAudioBufferActive) {
+      return;
+    }
+
+    if (this.remoteAudioOutputActive && trigger !== 'output-audio-buffer-stopped') {
+      return;
+    }
+
+    const reason = this.pendingGracefulDeactivateReason;
+    this.pendingGracefulDeactivateReason = null;
+    this.log('events', 'lifecycle', 'assistant graceful deactivate', `Finalizing graceful deactivate (${trigger})`);
+    this.callbacks.onAssistantControlRequest?.({
+      action: 'deactivate',
+      reason,
+    });
+  }
+
+  private isMicrophoneInputSuppressed(): boolean {
+    return this.externalAudioOutputSuppressionActive;
   }
 
   private async syncAudioOutputSuppression(reason: string): Promise<void> {
-    if (this.isAudioOutputSuppressed()) {
+    if (this.isMicrophoneInputSuppressed()) {
       if (this.state === 'online_listening') {
         this.resumeListeningAfterOutputSuppression = true;
         await this.detachMicrophone();

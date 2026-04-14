@@ -255,7 +255,7 @@ export class LiveSttController {
       const wakeEvaluation = evaluateCuePhrase({
         transcript: trimmed,
         kind: 'wake',
-        cueWord: 'hey',
+        cueWord: '',
         aiName: this.currentAssistantName(),
         trainedPhrases: this.config?.wakeSamples ?? [],
         trainedNameSamples: this.config?.nameSamples ?? [],
@@ -356,7 +356,7 @@ export class LiveSttController {
   }
 
   private currentWakePhrase(): string {
-    return `Hey ${this.currentAssistantName()}`;
+    return this.currentAssistantName();
   }
 
   private currentRecognitionLanguage(): string {
@@ -385,7 +385,7 @@ export class LiveSttController {
     const wakeEvaluation = evaluateCuePhrase({
       transcript,
       kind: 'wake',
-      cueWord: 'hey',
+      cueWord: '',
       aiName: this.currentAssistantName(),
       trainedPhrases: this.config?.wakeSamples ?? [],
       trainedNameSamples: this.config?.nameSamples ?? [],

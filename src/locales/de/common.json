@@ -119,7 +119,7 @@
     "trainWakePhrase": "Wake-Phrase trainieren",
     "assistantCalibrationWarning": "Bitte trainiere den aktuellen Namen und die aktuelle Sprache, bevor du speicherst.",
     "assistantCalibrationReady": "Die Wake-Word-Kalibrierung ist für diesen Namen und diese Sprache bereit.",
-    "assistantNameNote": "Verwende 3 bis 8 Zeichen, genau ein Wort. Die Wake-Phrase bleibt auf Englisch: <wake>Hey {{assistantName}}</wake> aktiviert den Assistenten.",
+    "assistantNameNote": "Verwende 3 bis 8 Zeichen, genau ein Wort. Die Wake-Phrase ist nur der Assistentenname: <wake>{{assistantName}}</wake> aktiviert den Assistenten.",
     "voiceAssistantModel": "Realtime-Modell",
     "voiceAssistantModelNote": "Waehle, welches Realtime-Modell die Sprachsitzung des Assistenten verwenden soll.",
     "voiceAssistantModelOptionRealtime": "Realtime",

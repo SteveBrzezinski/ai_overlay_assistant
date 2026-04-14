@@ -1,5 +1,5 @@
 type CueKind = 'wake';
-type CueWord = 'hey';
+type CueWord = string;
 
 export const DEFAULT_ASSISTANT_WAKE_THRESHOLD = 68;
 export const DEFAULT_ASSISTANT_CUE_COOLDOWN_MS = 1200;
@@ -98,8 +98,15 @@ export function evaluateCuePhrase(options: {
     return fallbackEvaluation;
   }
 
-  const expectedPhrase = normalizeForMatch(`${options.cueWord} ${options.aiName}`);
-  const compactExpectedPhrase = normalizeCompact(`${options.cueWord} ${options.aiName}`);
+  const cueWord = normalizeForMatch(options.cueWord);
+  const cueWordCompact = cueWord.replace(/\s+/g, '');
+  const cueWordEnabled = cueWord.length > 0;
+  const expectedPhrase = normalizeForMatch(
+    cueWordEnabled ? `${cueWord} ${options.aiName}` : options.aiName,
+  );
+  const compactExpectedPhrase = normalizeCompact(
+    cueWordEnabled ? `${cueWord} ${options.aiName}` : options.aiName,
+  );
   const normalizedPhraseSamples = sanitizeSamples(options.trainedPhrases)
     .map((value) => normalizeForMatch(value))
     .filter(Boolean);
@@ -117,19 +124,18 @@ export function evaluateCuePhrase(options: {
     let cueScore = 0;
     let cueWordIndex = -1;
 
-    for (let index = 0; index < words.length; index += 1) {
-      const score = similarity(words[index] ?? '', options.cueWord);
-      if (score > cueScore) {
-        cueScore = score;
-        cueWordIndex = index;
+    if (cueWordEnabled) {
+      for (let index = 0; index < words.length; index += 1) {
+        const score = similarity(words[index] ?? '', cueWord);
+        if (score > cueScore) {
+          cueScore = score;
+          cueWordIndex = index;
+        }
       }
     }
 
-    // The wake score mixes explicit cue-word evidence, name similarity, whole-phrase matches,
-    // and trained sample matches. This makes the detector tolerant to accent and spacing drift
-    // without accepting arbitrary speech as a wake phrase.
     const nameScore = maxNameSimilarity(
-      buildNameCandidates(words, compactCandidate, cueWordIndex, options.cueWord),
+      buildNameCandidates(words, compactCandidate, cueWordIndex, cueWordCompact),
       normalizedNameTargets,
       compactNameTargets,
     );
@@ -140,16 +146,16 @@ export function evaluateCuePhrase(options: {
     );
     const compactScore = similarity(compactCandidate, compactExpectedPhrase);
     const score = Math.round(
-      ((cueScore * 0.3 +
-        nameScore * 0.25 +
-        phraseScore * 0.2 +
-        sampleScore * 0.15 +
-        compactScore * 0.1) *
-        100),
+      (cueWordEnabled
+        ? cueScore * 0.3 + nameScore * 0.25 + phraseScore * 0.2 + sampleScore * 0.15 + compactScore * 0.1
+        : nameScore * 0.5 + phraseScore * 0.22 + sampleScore * 0.14 + compactScore * 0.14) * 100,
     );
-    const hasCueEvidence =
-      cueScore >= 0.6 || phraseScore >= 0.78 || sampleScore >= 0.82 || compactScore >= 0.82;
-    const hasNameEvidence = nameScore >= 0.55 || phraseScore >= 0.78 || compactScore >= 0.82;
+    const hasCueEvidence = cueWordEnabled
+      ? cueScore >= 0.6 || phraseScore >= 0.78 || sampleScore >= 0.82 || compactScore >= 0.82
+      : nameScore >= 0.72 || phraseScore >= 0.82 || sampleScore >= 0.84 || compactScore >= 0.84;
+    const hasNameEvidence = cueWordEnabled
+      ? nameScore >= 0.55 || phraseScore >= 0.78 || compactScore >= 0.82
+      : nameScore >= 0.6 || phraseScore >= 0.82 || compactScore >= 0.84;
     const evaluation: CueEvaluation = {
       kind: options.kind,
       matched: false,
@@ -179,7 +185,7 @@ export function evaluateCuePhrase(options: {
     ...bestEvaluation,
     matched:
       bestEvaluation.score >= threshold &&
-      bestEvaluation.hasCueEvidence &&
+      (cueWordEnabled ? bestEvaluation.hasCueEvidence : true) &&
       bestEvaluation.hasNameEvidence &&
       bestEvaluation.cooldownRemainingMs <= 0,
   };
@@ -276,6 +282,21 @@ function buildNameCandidates(
   cueWord: CueWord,
 ): string[] {
   const candidates = new Set<string>();
+
+  if (!cueWord) {
+    for (let start = 0; start < words.length; start += 1) {
+      for (let take = 1; take <= MAX_NAME_WINDOW_WORDS && start + take <= words.length; take += 1) {
+        const value = words.slice(start, start + take).join(' ');
+        if (value) {
+          candidates.add(value);
+        }
+      }
+    }
+    if (compactCandidate) {
+      candidates.add(compactCandidate);
+    }
+    return [...candidates];
+  }
 
   if (cueWordIndex >= 0) {
     for (let take = 1; take <= MAX_NAME_WINDOW_WORDS; take += 1) {

@@ -119,7 +119,7 @@
     "trainWakePhrase": "Train wake phrase",
     "assistantCalibrationWarning": "Please train the current name and language before saving.",
     "assistantCalibrationReady": "Wake-word calibration is ready for this name and language.",
-    "assistantNameNote": "Use 3-8 characters, one single word. The wake phrase stays in English: <wake>Hey {{assistantName}}</wake> activates the assistant.",
+    "assistantNameNote": "Use 3-8 characters, one single word. The wake phrase is just the assistant name: <wake>{{assistantName}}</wake> activates the assistant.",
     "voiceAssistantModel": "Realtime model",
     "voiceAssistantModelNote": "Choose which realtime model the voice assistant session should use.",
     "voiceAssistantModelOptionRealtime": "Realtime",
