@@ -308,16 +308,19 @@ export function useVoiceAssistantRuntime(
   }, [startVoiceAgent]);
 
   const deactivateAssistantVoice = useCallback(async (source = 'manual'): Promise<void> => {
+    const normalizedSource = normalizeAssistantSource(source);
     if (liveSttControllerRef.current) {
-      liveSttControllerRef.current.manualDeactivate(normalizeAssistantSource(source));
+      liveSttControllerRef.current.manualDeactivate(normalizedSource);
       return;
     }
 
     await realtimeVoiceAgentRef.current?.mute(source);
     setAssistantActive(false);
-    setAssistantStateDetail(i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source }));
+    setAssistantStateDetail(
+      i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source: normalizedSource }),
+    );
     setLiveTranscriptionStatus(
-      i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source }),
+      i18n.t('voiceRuntime.assistantInactiveMicrophoneMuted', { source: normalizedSource }),
     );
     setLiveTranscript('');
     setLastSttActiveTranscript('');

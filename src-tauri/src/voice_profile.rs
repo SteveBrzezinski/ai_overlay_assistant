@@ -183,11 +183,31 @@ pub fn build_assistant_instructions(settings: &AppSettings) -> String {
         "9. For questions about the current time, date, weekday, timezone, or 'right now', use get_current_time instead of guessing.".to_string(),
         "10. Use the timer tools for countdowns, reminders, pauses, resumptions, deletions, renames, duration changes, or questions about remaining time. If no timer title is given, the local tool layer will generate one. When a timer has already finished and the user asks to stop, silence, dismiss, remove, or clear it, dismiss the finished timer so the repeating alert stops.".to_string(),
         "11. Treat timer-completion SYSTEM_EVENT messages as background reminders. Announce them naturally without the prefix.".to_string(),
-        "12. When the conversation ends naturally, say goodbye briefly and then use deactivate_voice_assistant as the final step.".to_string(),
-        "13. Keep responses concise, natural, and conversational by default.".to_string(),
+        "12. Before every answer to a new user turn, silently run a conversation-end check: decide whether the user is likely done, signing off, dismissing you, or ending the conversation for now.".to_string(),
+        "13. If the latest user turn sounds like a closing or final confirmation, prefer ending the conversation over continuing it. This includes short closing turns such as 'thanks, that's all', 'okay bye', 'see you', 'good night', 'danke das war's', 'das war alles', 'bis dann', 'tschüss', or similar sign-offs.".to_string(),
+        "14. If you ask the user a follow-up question, ask for confirmation, or otherwise leave the turn open for the user to answer, the conversation is not over. In that case do not use deactivate_voice_assistant.".to_string(),
+        "15. If the conversation-end check is positive or even moderately likely, reply with one brief farewell in the user's language and then use deactivate_voice_assistant as the final step. Do not keep helping, do not ask a follow-up question, and do not continue with new suggestions unless the user clearly asks to continue.".to_string(),
+        "16. Keep responses concise, natural, and conversational by default.".to_string(),
     ]
     .into_iter()
     .filter(|line| !line.trim().is_empty())
     .collect::<Vec<_>>()
     .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_assistant_instructions;
+    use crate::settings::AppSettings;
+
+    #[test]
+    fn assistant_instructions_include_explicit_conversation_end_policy() {
+        let instructions = build_assistant_instructions(&AppSettings::default());
+
+        assert!(instructions.contains("silently run a conversation-end check"));
+        assert!(instructions.contains("danke das war's"));
+        assert!(instructions.contains("brief farewell in the user's language"));
+        assert!(instructions.contains("the conversation is not over"));
+        assert!(instructions.contains("deactivate_voice_assistant as the final step"));
+    }
 }

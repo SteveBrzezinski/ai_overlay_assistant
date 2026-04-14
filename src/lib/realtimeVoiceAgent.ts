@@ -477,6 +477,13 @@ export class RealtimeVoiceAgentController {
       const responseRecord = asRecord(event.response);
       const responseId = firstString(responseRecord?.id);
       const output = Array.isArray(responseRecord?.output) ? responseRecord.output : [];
+      const assistantText = output
+        .flatMap((item) => {
+          const record = asRecord(item);
+          return record ? collectMessageTexts(record) : [];
+        })
+        .join('\n\n')
+        .trim();
       let executedToolCall = false;
       for (const item of output) {
         if (isToolCallItem(item)) {
@@ -486,14 +493,6 @@ export class RealtimeVoiceAgentController {
       }
 
       if (responseContext?.channel === 'chat') {
-        const assistantText = output
-          .flatMap((item) => {
-            const record = asRecord(item);
-            return record ? collectMessageTexts(record) : [];
-          })
-          .join('\n\n')
-          .trim();
-
         if (assistantText) {
           this.callbacks.onChatEvent?.({
             type: 'assistant-message',
@@ -511,6 +510,13 @@ export class RealtimeVoiceAgentController {
 
       if (responseId) {
         this.responseContexts.delete(responseId);
+      }
+
+      if (!executedToolCall && looksLikeAssistantFarewell(assistantText)) {
+        this.callbacks.onAssistantControlRequest?.({
+          action: 'deactivate',
+          reason: 'assistant-farewell-fallback',
+        });
       }
 
       if (
@@ -953,4 +959,43 @@ export class RealtimeVoiceAgentController {
       await this.attachMicrophone(`${reason}-resume`);
     }
   }
+}
+
+function looksLikeAssistantFarewell(text: string): boolean {
+  const normalized = normalizeConversationText(text);
+  if (!normalized || normalized.length > 180) {
+    return false;
+  }
+
+  return [
+    'tschuss',
+    'tschuess',
+    'auf wiedersehen',
+    'bis dann',
+    'bis bald',
+    'bis spater',
+    'machs gut',
+    'bye',
+    'goodbye',
+    'see you',
+    'see you later',
+    'talk to you later',
+    'good night',
+    'have a good one',
+  ].some(
+    (phrase) =>
+      normalized === phrase ||
+      normalized.endsWith(` ${phrase}`) ||
+      normalized.includes(`${phrase} `),
+  );
+}
+
+function normalizeConversationText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
