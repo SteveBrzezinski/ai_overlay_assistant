@@ -59,6 +59,15 @@
     "quickActions": "AI overlay quick actions",
     "speak": "Speak",
     "chat": "Chat",
+    "dictatePaste": "Dictate and paste",
+    "dictatePasteShort": "Dictate",
+    "dictateClipboard": "Dictate to clipboard",
+    "dictateClipboardShort": "Clipboard",
+    "compact": "Compact",
+    "compactSelection": "Compact selected text and replace it",
+    "translate": "Translate",
+    "translateReplace": "Translate selected text and replace it",
+    "language": "Language",
     "timer": "Timer",
     "settings": "Settings",
     "openSettings": "Open settings",
@@ -74,7 +83,16 @@
       "settingsFailed": "Could not open the settings page: {{detail}}",
       "chatOpened": "Chat window opened.",
       "chatClosed": "Chat window closed.",
-      "chatFailed": "Could not toggle the chat window: {{detail}}"
+      "chatFailed": "Could not toggle the chat window: {{detail}}",
+      "dictationPasteStarted": "Hold to dictate. Release to paste the text.",
+      "dictationClipboardStarted": "Hold to dictate. Release to save the text to clipboard.",
+      "dictationFailed": "Dictation action failed: {{detail}}",
+      "compactDone": "Selected text compacted and replaced ({{count}} characters).",
+      "compactFailed": "Selected text could not be compacted: {{detail}}",
+      "translateReplaceDone": "Selected text translated to {{language}} and replaced.",
+      "translateReplaceFailed": "Selected text could not be translated: {{detail}}",
+      "languageChanged": "Action language changed to {{language}}.",
+      "languageFailed": "Action language could not be changed: {{detail}}"
     }
   },
   "dictationNotifications": {

@@ -51,6 +51,7 @@ export const fallbackHotkeyStatus: HotkeyStatus = {
   deactivateAccelerator: 'Ctrl+Shift+D',
   dictationPasteAccelerator: 'Ctrl+Shift+Alt',
   dictationClipboardAccelerator: 'Ctrl+Shift+Y',
+  compactSelectionAccelerator: 'Ctrl+Shift+1',
   platform: 'unsupported',
   state: 'registering',
   message: i18n.t('hero.statusChecking'),
@@ -125,7 +126,7 @@ export const fallbackSettings: AppSettings = {
   assistantSampleLanguage: 'de',
   assistantWakeThreshold: DEFAULT_ASSISTANT_WAKE_THRESHOLD,
   assistantCueCooldownMs: DEFAULT_ASSISTANT_CUE_COOLDOWN_MS,
-  actionBarDisplayMode: 'icons-and-text',
+  actionBarDisplayMode: 'icons-only',
 };
 
 export function mergeHostedSettings(target: AppSettings, source: AppSettings): AppSettings {

@@ -59,6 +59,15 @@
     "quickActions": "Schnellaktionen des AI-Overlays",
     "speak": "Sprechen",
     "chat": "Chat",
+    "dictatePaste": "Diktieren und einfuegen",
+    "dictatePasteShort": "Diktat",
+    "dictateClipboard": "Diktat ins Clipboard",
+    "dictateClipboardShort": "Clipboard",
+    "compact": "Kompakt",
+    "compactSelection": "Markierten Text kompaktisieren und ersetzen",
+    "translate": "Uebersetzen",
+    "translateReplace": "Markierten Text uebersetzen und ersetzen",
+    "language": "Sprache",
     "timer": "Timer",
     "settings": "Einstellungen",
     "openSettings": "Einstellungen öffnen",
@@ -74,7 +83,16 @@
       "settingsFailed": "Die Einstellungsseite konnte nicht geöffnet werden: {{detail}}",
       "chatOpened": "Chatfenster geöffnet.",
       "chatClosed": "Chatfenster geschlossen.",
-      "chatFailed": "Das Chatfenster konnte nicht umgeschaltet werden: {{detail}}"
+      "chatFailed": "Das Chatfenster konnte nicht umgeschaltet werden: {{detail}}",
+      "dictationPasteStarted": "Gedrueckt halten zum Diktieren. Loslassen fuegt den Text ein.",
+      "dictationClipboardStarted": "Gedrueckt halten zum Diktieren. Loslassen speichert ins Clipboard.",
+      "dictationFailed": "Diktat-Aktion fehlgeschlagen: {{detail}}",
+      "compactDone": "Markierter Text wurde kompaktisiert und ersetzt ({{count}} Zeichen).",
+      "compactFailed": "Markierter Text konnte nicht kompaktisiert werden: {{detail}}",
+      "translateReplaceDone": "Markierter Text wurde nach {{language}} uebersetzt und ersetzt.",
+      "translateReplaceFailed": "Markierter Text konnte nicht uebersetzt werden: {{detail}}",
+      "languageChanged": "Aktionssprache auf {{language}} gesetzt.",
+      "languageFailed": "Aktionssprache konnte nicht geaendert werden: {{detail}}"
     }
   },
   "dictationNotifications": {

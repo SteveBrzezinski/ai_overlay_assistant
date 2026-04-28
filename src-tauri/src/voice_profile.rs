@@ -1,7 +1,7 @@
 use crate::realtime_voice::sanitize_realtime_voice_for_model;
 use crate::settings::{
-    AppSettings, default_voice_agent_preferred_language, sanitize_voice_agent_gender,
-    sanitize_voice_agent_model,
+    default_voice_agent_preferred_language, sanitize_voice_agent_gender,
+    sanitize_voice_agent_model, AppSettings,
 };
 use serde::Serialize;
 
@@ -43,12 +43,8 @@ fn sanitize_line(value: &str, fallback: &str) -> String {
 }
 
 fn sanitize_multiline(value: &str, fallback: &str) -> String {
-    let normalized = value
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let normalized =
+        value.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join("\n");
 
     if normalized.is_empty() {
         fallback.to_string()

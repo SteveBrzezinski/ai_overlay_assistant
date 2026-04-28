@@ -2236,6 +2236,67 @@ body.overlay-body #root {
   padding: 0 14px 0 12px;
 }
 
+.edge-nav-language {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.edge-nav-language:hover,
+.edge-nav-language:focus-within {
+  color: var(--text-primary);
+  background: var(--button-secondary-bg-hover);
+}
+
+.edge-nav-language-label {
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.edge-nav-language-select {
+  min-width: 64px;
+  height: 28px;
+  padding: 0 22px 0 8px;
+  border: 1px solid var(--overlay-shell-border);
+  border-radius: 8px;
+  background: var(--overlay-shell);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  outline: none;
+}
+
+.edge-nav-language-select:focus-visible {
+  border-color: var(--edge-action-active-border);
+  box-shadow: 0 0 0 2px var(--edge-action-active-glow-soft);
+}
+
+.edge-nav-panel[data-display-mode='icons-only'] .edge-nav-language {
+  width: 74px;
+  min-width: 74px;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.edge-nav-panel[data-display-mode='icons-only'] .edge-nav-language-select {
+  min-width: 58px;
+  width: 58px;
+  padding-left: 7px;
+  padding-right: 18px;
+}
+
 .edge-nav-timer-flyout {
   position: absolute;
   left: 14px;

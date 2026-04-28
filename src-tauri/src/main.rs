@@ -54,6 +54,8 @@ fn main() {
             voice_overlay_assistant::translate_text_command,
             voice_overlay_assistant::capture_and_speak_command,
             voice_overlay_assistant::capture_and_translate_command,
+            voice_overlay_assistant::compact_selected_text_command,
+            voice_overlay_assistant::translate_selected_text_replace_command,
             voice_overlay_assistant::get_settings,
             voice_overlay_assistant::update_settings,
             voice_overlay_assistant::reset_settings,

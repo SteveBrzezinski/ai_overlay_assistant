@@ -348,6 +348,7 @@ export type HotkeyStatus = {
   deactivateAccelerator: string;
   dictationPasteAccelerator: string;
   dictationClipboardAccelerator: string;
+  compactSelectionAccelerator: string;
   platform: 'windows' | 'unsupported';
   state: 'idle' | 'registering' | 'working' | 'success' | 'error' | 'unsupported';
   message: string;
@@ -459,6 +460,17 @@ export type DictationInsertResult = {
   text: string;
   mode: 'paste' | 'clipboard';
   pasted: boolean;
+};
+
+export type SelectedTextActionResult = {
+  action: string;
+  capturedText: string;
+  outputText: string;
+  pasted: boolean;
+  model?: string | null;
+  targetLanguage?: string | null;
+  restoredClipboard: boolean;
+  elapsedMs: number;
 };
 
 export type DictationNotificationKind =
@@ -602,6 +614,10 @@ export async function onLiveSttControl(callback: (event: LiveSttControlEvent) =>
 
 export async function onDictationHotkey(callback: (event: DictationHotkeyEvent) => void): Promise<UnlistenFn> {
   return listen<DictationHotkeyEvent>(DICTATION_HOTKEY_EVENT, (event) => callback(event.payload));
+}
+
+export async function emitDictationHotkey(event: DictationHotkeyEvent): Promise<void> {
+  await emitTo<DictationHotkeyEvent>('main', DICTATION_HOTKEY_EVENT, event);
 }
 
 export async function onDictationNotification(
@@ -829,6 +845,18 @@ export async function captureAndTranslate(
       sourceLanguage: translateOptions.sourceLanguage,
       targetLanguage: translateOptions.targetLanguage,
     },
+  });
+}
+
+export async function compactSelectedText(): Promise<SelectedTextActionResult> {
+  return invoke<SelectedTextActionResult>('compact_selected_text_command');
+}
+
+export async function translateSelectedText(
+  targetLanguage?: string,
+): Promise<SelectedTextActionResult> {
+  return invoke<SelectedTextActionResult>('translate_selected_text_replace_command', {
+    request: { targetLanguage },
   });
 }
 

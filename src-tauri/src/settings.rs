@@ -79,7 +79,7 @@ impl Default for AppSettings {
             realtime_allow_live_fallback: false,
             design_theme_id: DEFAULT_DESIGN_THEME_ID.to_string(),
             action_bar_active_glow_color: DEFAULT_ACTION_BAR_ACTIVE_GLOW_COLOR.to_string(),
-            action_bar_display_mode: "icons-and-text".to_string(),
+            action_bar_display_mode: "icons-only".to_string(),
             tts_format: "wav".to_string(),
             first_chunk_leading_silence_ms: 180,
             ui_language: "en".to_string(),
@@ -224,7 +224,7 @@ pub fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         match settings.action_bar_display_mode.trim().to_lowercase().as_str() {
             "icons-only" => "icons-only".to_string(),
             "text-only" => "text-only".to_string(),
-            _ => "icons-and-text".to_string(),
+            _ => "icons-only".to_string(),
         };
     settings.action_bar_active_glow_color = sanitize_hex_color(
         settings.action_bar_active_glow_color,

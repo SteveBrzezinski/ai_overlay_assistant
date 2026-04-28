@@ -1,6 +1,7 @@
 pub mod app_icon;
 pub mod audio_output;
 pub mod background;
+pub mod clipboard;
 pub mod dictation;
 pub mod hosted_backend;
 pub mod hotkey;
@@ -9,6 +10,7 @@ pub mod run_controller;
 pub mod selection_capture;
 pub mod settings;
 pub mod stt;
+pub mod text_actions;
 pub mod timer_audio;
 pub mod translation;
 pub mod tts;
@@ -291,6 +293,7 @@ pub use hosted_backend::{
     get_hosted_billing_plans_command, login_hosted_account_command, logout_hosted_account_command,
     open_external_url_command,
 };
+pub use text_actions::{compact_selected_text_command, translate_selected_text_replace_command};
 pub use timer_audio::{start_timer_signal_alert_command, stop_timer_signal_alert_command};
 pub use voice_agent::{create_voice_agent_session_command, run_voice_agent_tool_command};
 pub use voice_memory::{

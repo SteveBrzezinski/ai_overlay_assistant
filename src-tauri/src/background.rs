@@ -143,7 +143,7 @@ pub fn setup_overlay_windows<R: Runtime>(app: &AppHandle<R>) -> Result<(), Strin
         22.0,
         84.0,
         true,
-        true,
+        false,
     )?;
     ensure_overlay_window(
         app,
@@ -176,6 +176,9 @@ fn ensure_overlay_window<R: Runtime>(
     focusable: bool,
 ) -> Result<(), String> {
     if app.get_webview_window(label).is_some() {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_focusable(focusable);
+        }
         return Ok(());
     }
 

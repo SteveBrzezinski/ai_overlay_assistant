@@ -15,6 +15,7 @@ pub const DEFAULT_ACTIVATE_ASSISTANT_HOTKEY: &str = "Ctrl+Shift+A";
 pub const DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY: &str = "Ctrl+Shift+D";
 pub const DEFAULT_DICTATION_PASTE_HOTKEY: &str = "Ctrl+Shift+Alt";
 pub const DEFAULT_DICTATION_CLIPBOARD_HOTKEY: &str = "Ctrl+Shift+Y";
+pub const DEFAULT_COMPACT_SELECTION_HOTKEY: &str = "Ctrl+Shift+1";
 pub const HOTKEY_STATUS_EVENT: &str = "hotkey-status";
 pub const LIVE_STT_CONTROL_EVENT: &str = "live-stt-control";
 pub const DICTATION_HOTKEY_EVENT: &str = "dictation-hotkey";
@@ -31,6 +32,7 @@ pub struct HotkeyStatusPayload {
     pub deactivate_accelerator: &'static str,
     pub dictation_paste_accelerator: &'static str,
     pub dictation_clipboard_accelerator: &'static str,
+    pub compact_selection_accelerator: &'static str,
     pub platform: &'static str,
     pub state: &'static str,
     pub message: String,
@@ -126,7 +128,7 @@ impl Default for HotkeyState {
                 registered: false,
                 state: "idle",
                 message: format!(
-                    "Global hotkeys {DEFAULT_SPEAK_HOTKEY}, {DEFAULT_TRANSLATE_HOTKEY}, {DEFAULT_PAUSE_RESUME_HOTKEY}, {DEFAULT_CANCEL_HOTKEY}, {DEFAULT_ACTIVATE_ASSISTANT_HOTKEY}, {DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY}, {DEFAULT_DICTATION_PASTE_HOTKEY}, and {DEFAULT_DICTATION_CLIPBOARD_HOTKEY} are not registered yet."
+                    "Global hotkeys {DEFAULT_SPEAK_HOTKEY}, {DEFAULT_TRANSLATE_HOTKEY}, {DEFAULT_PAUSE_RESUME_HOTKEY}, {DEFAULT_CANCEL_HOTKEY}, {DEFAULT_ACTIVATE_ASSISTANT_HOTKEY}, {DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY}, {DEFAULT_DICTATION_PASTE_HOTKEY}, {DEFAULT_DICTATION_CLIPBOARD_HOTKEY}, and {DEFAULT_COMPACT_SELECTION_HOTKEY} are not registered yet."
                 ),
                 ..Default::default()
             }),
@@ -147,6 +149,7 @@ impl HotkeyState {
             deactivate_accelerator: DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY,
             dictation_paste_accelerator: DEFAULT_DICTATION_PASTE_HOTKEY,
             dictation_clipboard_accelerator: DEFAULT_DICTATION_CLIPBOARD_HOTKEY,
+            compact_selection_accelerator: DEFAULT_COMPACT_SELECTION_HOTKEY,
             platform: if cfg!(target_os = "windows") { "windows" } else { "unsupported" },
             state: snapshot.state,
             message: snapshot.message.clone(),
@@ -377,6 +380,7 @@ mod windows_impl {
     use crate::{
         selection_capture::{capture_selected_text, CaptureOptions},
         settings::SettingsState,
+        text_actions::compact_selected_text_and_replace,
         translation::{translate_text, TranslateTextOptions},
         tts::{speak_text_with_progress_and_control, SpeakTextOptions, TtsProgress},
     };
@@ -405,6 +409,7 @@ mod windows_impl {
     const ACTIVATE_ASSISTANT_HOTKEY_ID: i32 = 0x564f61;
     const DEACTIVATE_ASSISTANT_HOTKEY_ID: i32 = 0x564f62;
     const DICTATION_CLIPBOARD_HOTKEY_ID: i32 = 0x564f64;
+    const COMPACT_SELECTION_HOTKEY_ID: i32 = 0x564f65;
     static DICTATION_ACTIVE: AtomicBool = AtomicBool::new(false);
 
     #[derive(Clone, Copy)]
@@ -430,6 +435,7 @@ mod windows_impl {
                 (TRANSLATE_HOTKEY_ID, VK_T.0 as u32, DEFAULT_TRANSLATE_HOTKEY),
                 (PAUSE_RESUME_HOTKEY_ID, VK_P.0 as u32, DEFAULT_PAUSE_RESUME_HOTKEY),
                 (CANCEL_HOTKEY_ID, VK_X.0 as u32, DEFAULT_CANCEL_HOTKEY),
+                (COMPACT_SELECTION_HOTKEY_ID, 0x31, DEFAULT_COMPACT_SELECTION_HOTKEY),
                 (ACTIVATE_ASSISTANT_HOTKEY_ID, VK_A.0 as u32, DEFAULT_ACTIVATE_ASSISTANT_HOTKEY),
                 (
                     DEACTIVATE_ASSISTANT_HOTKEY_ID,
@@ -471,7 +477,7 @@ mod windows_impl {
                 snapshot.registered = true;
                 snapshot.state = "idle";
                 snapshot.message = format!(
-                    "Global hotkeys ready: {DEFAULT_SPEAK_HOTKEY} speaks, {DEFAULT_TRANSLATE_HOTKEY} translates, {DEFAULT_PAUSE_RESUME_HOTKEY} pauses/resumes, {DEFAULT_CANCEL_HOTKEY} cancels the current run, {DEFAULT_ACTIVATE_ASSISTANT_HOTKEY} activates the live assistant, {DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY} deactivates it, {DEFAULT_DICTATION_PASTE_HOTKEY} dictates and pastes, and {DEFAULT_DICTATION_CLIPBOARD_HOTKEY} dictates to the clipboard."
+                    "Global hotkeys ready: {DEFAULT_SPEAK_HOTKEY} speaks, {DEFAULT_TRANSLATE_HOTKEY} translates, {DEFAULT_COMPACT_SELECTION_HOTKEY} compacts and replaces selected text, {DEFAULT_PAUSE_RESUME_HOTKEY} pauses/resumes, {DEFAULT_CANCEL_HOTKEY} cancels the current run, {DEFAULT_ACTIVATE_ASSISTANT_HOTKEY} activates the live assistant, {DEFAULT_DEACTIVATE_ASSISTANT_HOTKEY} deactivates it, {DEFAULT_DICTATION_PASTE_HOTKEY} dictates and pastes, and {DEFAULT_DICTATION_CLIPBOARD_HOTKEY} dictates to the clipboard."
                 );
             });
 
@@ -486,6 +492,7 @@ mod windows_impl {
                     match msg.wParam.0 as i32 {
                         SPEAK_HOTKEY_ID => trigger_capture_and_speak(&app_handle),
                         TRANSLATE_HOTKEY_ID => trigger_capture_and_translate(&app_handle),
+                        COMPACT_SELECTION_HOTKEY_ID => trigger_compact_selection(&app_handle),
                         PAUSE_RESUME_HOTKEY_ID => trigger_pause_resume(&app_handle),
                         CANCEL_HOTKEY_ID => trigger_cancel(&app_handle),
                         ACTIVATE_ASSISTANT_HOTKEY_ID => {
@@ -511,6 +518,7 @@ mod windows_impl {
                 TRANSLATE_HOTKEY_ID,
                 PAUSE_RESUME_HOTKEY_ID,
                 CANCEL_HOTKEY_ID,
+                COMPACT_SELECTION_HOTKEY_ID,
                 ACTIVATE_ASSISTANT_HOTKEY_ID,
                 DEACTIVATE_ASSISTANT_HOTKEY_ID,
                 DICTATION_CLIPBOARD_HOTKEY_ID,
@@ -653,6 +661,14 @@ mod windows_impl {
             snapshot.state = "idle";
             snapshot.last_action = Some(format!("live-stt-{action}"));
             snapshot.message = detail.to_string();
+        });
+    }
+
+    fn trigger_compact_selection(app: &AppHandle) {
+        let app_handle = app.clone();
+        thread::spawn(move || {
+            let settings = app_handle.state::<SettingsState>();
+            let _ = compact_selected_text_and_replace(&app_handle, &settings);
         });
     }
 

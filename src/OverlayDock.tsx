@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+} from 'react';
 import {
   LogicalPosition,
   LogicalSize,
@@ -7,19 +14,43 @@ import {
   primaryMonitor,
 } from '@tauri-apps/api/window';
 import {
+  ClipboardCheck,
+  Languages,
+  MessageCircle,
+  Mic,
+  Minimize2,
+  Play,
+  Settings,
+  Timer,
+} from 'lucide-react';
+import {
+  compactSelectedText,
+  emitDictationHotkey,
   getAssistantState,
   getChatWindowVisibility,
+  getHotkeyStatus,
+  getLanguageOptions,
   getMainWindowVisibility,
   getSettings,
+  onHotkeyStatus,
   onDictationNotification,
   onAssistantStateChange,
   onChatWindowVisibility,
   onMainWindowVisibility,
   onSettingsUpdated,
+  translateSelectedText,
   toggleChatWindow,
   toggleMainWindow,
+  updateSettings,
 } from './lib/voiceOverlay';
-import type { DictationNotificationPayload, VoiceTimer } from './lib/voiceOverlay';
+import type {
+  AppSettings,
+  DictationHotkeyEvent,
+  DictationNotificationPayload,
+  HotkeyStatus,
+  LanguageOption,
+  VoiceTimer,
+} from './lib/voiceOverlay';
 import {
   OVERLAY_ACTION_EVENT,
   OVERLAY_STATE_EVENT,
@@ -36,9 +67,9 @@ const BOTTOM_INSET = 10;
 const WINDOW_PADDING = { top: 8, right: 6, bottom: 8 };
 const COLLAPSED_LAYOUT = { width: 22, height: 84 };
 const EXPANDED_LAYOUTS = {
-  'icons-only': { width: 260, height: 84 },
-  'text-only': { width: 360, height: 84 },
-  'icons-and-text': { width: 470, height: 84 },
+  'icons-only': { width: 470, height: 84 },
+  'text-only': { width: 760, height: 84 },
+  'icons-and-text': { width: 900, height: 84 },
 } as const;
 const TIMER_FLYOUT_HEIGHT = 286;
 const TIMER_DIALOG_LAYOUT = { minWidth: 620, height: 760 };
@@ -149,7 +180,9 @@ export default function OverlayDock() {
   const isExpandedRef = useRef(false);
   const isPointerInsideRef = useRef(false);
   const armedActionRef = useRef<string | null>(null);
-  const actionBarDisplayModeRef = useRef<ActionBarDisplayMode>('icons-and-text');
+  const activeDictationModeRef = useRef<DictationHotkeyEvent['mode'] | null>(null);
+  const settingsSnapshotRef = useRef<AppSettings | null>(null);
+  const actionBarDisplayModeRef = useRef<ActionBarDisplayMode>('icons-only');
   const timerFlyoutOpenRef = useRef(false);
   const timerDialogOpenRef = useRef(false);
   const isTimerButtonHoveredRef = useRef(false);
@@ -165,10 +198,12 @@ export default function OverlayDock() {
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [isMainWindowVisible, setIsMainWindowVisible] = useState(false);
   const [actionBarDisplayMode, setActionBarDisplayMode] =
-    useState<ActionBarDisplayMode>('icons-and-text');
+    useState<ActionBarDisplayMode>('icons-only');
   const [actionBarActiveGlowColor, setActionBarActiveGlowColor] = useState(
     DEFAULT_ACTION_BAR_ACTIVE_GLOW_COLOR,
   );
+  const [translationTargetLanguage, setTranslationTargetLanguage] = useState('en');
+  const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>([]);
   const [pendingSpeakActive, setPendingSpeakActive] = useState<boolean | null>(null);
   const [dictationPulseState, setDictationPulseState] =
     useState<DictationPulseState>(null);
@@ -220,6 +255,7 @@ export default function OverlayDock() {
     let unlistenChatWindowVisibility: (() => void | Promise<void>) | undefined;
     let unlistenMainWindowVisibility: (() => void | Promise<void>) | undefined;
     let unlistenDictationNotification: (() => void | Promise<void>) | undefined;
+    let unlistenHotkeyStatus: (() => void | Promise<void>) | undefined;
     let unlistenSettings: (() => void | Promise<void>) | undefined;
     let unlistenScale: (() => void | Promise<void>) | undefined;
 
@@ -257,14 +293,24 @@ export default function OverlayDock() {
 
     void getSettings()
       .then((settings) => {
-        setActionBarDisplayMode(settings.actionBarDisplayMode ?? 'icons-and-text');
+        settingsSnapshotRef.current = settings;
+        setActionBarDisplayMode(settings.actionBarDisplayMode ?? 'icons-only');
+        setTranslationTargetLanguage(settings.translationTargetLanguage);
         setActionBarActiveGlowColor(
           normalizeHexColor(settings.actionBarActiveGlowColor),
         );
       })
       .catch(() => {
-        setActionBarDisplayMode('icons-and-text');
+        setActionBarDisplayMode('icons-only');
         setActionBarActiveGlowColor(DEFAULT_ACTION_BAR_ACTIVE_GLOW_COLOR);
+      });
+
+    void getLanguageOptions()
+      .then((options) => {
+        setLanguageOptions(options);
+      })
+      .catch(() => {
+        setLanguageOptions([]);
       });
 
     void onAssistantStateChange(({ active }) => {
@@ -309,8 +355,40 @@ export default function OverlayDock() {
       unlistenDictationNotification = cleanup;
     });
 
+    const applyHotkeyStatus = (status: HotkeyStatus): void => {
+      if (!status.lastAction) {
+        return;
+      }
+
+      setStatusNote(status.message);
+      if (dictationPulseTimerRef.current !== null) {
+        window.clearTimeout(dictationPulseTimerRef.current);
+        dictationPulseTimerRef.current = null;
+      }
+
+      if (status.state === 'working') {
+        setDictationPulseState('transcribing');
+        return;
+      }
+
+      if (status.state === 'success' || status.state === 'error') {
+        setDictationPulseState(status.state);
+        dictationPulseTimerRef.current = window.setTimeout(() => {
+          dictationPulseTimerRef.current = null;
+          setDictationPulseState(null);
+        }, status.state === 'error' ? 2600 : 1900);
+      }
+    };
+
+    void getHotkeyStatus().then(applyHotkeyStatus).catch(() => undefined);
+    void onHotkeyStatus(applyHotkeyStatus).then((cleanup) => {
+      unlistenHotkeyStatus = cleanup;
+    });
+
     void onSettingsUpdated((settings) => {
-      setActionBarDisplayMode(settings.actionBarDisplayMode ?? 'icons-and-text');
+      settingsSnapshotRef.current = settings;
+      setActionBarDisplayMode(settings.actionBarDisplayMode ?? 'icons-only');
+      setTranslationTargetLanguage(settings.translationTargetLanguage);
       setActionBarActiveGlowColor(
         normalizeHexColor(settings.actionBarActiveGlowColor),
       );
@@ -361,6 +439,7 @@ export default function OverlayDock() {
       void unlistenChatWindowVisibility?.();
       void unlistenMainWindowVisibility?.();
       void unlistenDictationNotification?.();
+      void unlistenHotkeyStatus?.();
       void unlistenSettings?.();
       void unlistenScale?.();
     };
@@ -609,6 +688,110 @@ export default function OverlayDock() {
     }
   };
 
+  const dictationAcceleratorForMode = (
+    mode: DictationHotkeyEvent['mode'],
+  ): string => (mode === 'clipboard' ? 'Ctrl+Shift+Y' : 'Ctrl+Shift+Alt');
+
+  const emitDictationAction = async (
+    action: DictationHotkeyEvent['action'],
+    mode: DictationHotkeyEvent['mode'],
+  ): Promise<void> => {
+    await emitDictationHotkey({
+      action,
+      mode,
+      source: 'action-bar',
+      accelerator: dictationAcceleratorForMode(mode),
+    });
+  };
+
+  const startDictationFromButton = (
+    mode: DictationHotkeyEvent['mode'],
+    event: PointerEvent<HTMLButtonElement>,
+  ): void => {
+    if (event.button !== 0 || activeDictationModeRef.current) {
+      return;
+    }
+
+    activeDictationModeRef.current = mode;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsExpanded(true);
+    setStatusNote(
+      mode === 'clipboard'
+        ? i18n.t('overlayDock.status.dictationClipboardStarted')
+        : i18n.t('overlayDock.status.dictationPasteStarted'),
+    );
+    void emitDictationAction('start', mode).catch((error: unknown) => {
+      activeDictationModeRef.current = null;
+      const text = error instanceof Error ? error.message : String(error);
+      setStatusNote(i18n.t('overlayDock.status.dictationFailed', { detail: text }));
+    });
+  };
+
+  const stopDictationFromButton = (
+    mode: DictationHotkeyEvent['mode'],
+    event?: PointerEvent<HTMLButtonElement>,
+  ): void => {
+    if (activeDictationModeRef.current !== mode) {
+      return;
+    }
+
+    activeDictationModeRef.current = null;
+    if (event?.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    void emitDictationAction('stop', mode).catch((error: unknown) => {
+      const text = error instanceof Error ? error.message : String(error);
+      setStatusNote(i18n.t('overlayDock.status.dictationFailed', { detail: text }));
+    });
+  };
+
+  const handleCompactSelection = async (): Promise<void> => {
+    setIsExpanded(true);
+    try {
+      const result = await compactSelectedText();
+      setStatusNote(i18n.t('overlayDock.status.compactDone', { count: result.outputText.length }));
+    } catch (error: unknown) {
+      const text = error instanceof Error ? error.message : String(error);
+      setStatusNote(i18n.t('overlayDock.status.compactFailed', { detail: text }));
+    }
+  };
+
+  const handleTranslateSelectionReplace = async (): Promise<void> => {
+    setIsExpanded(true);
+    try {
+      const result = await translateSelectedText(translationTargetLanguage);
+      setStatusNote(
+        i18n.t('overlayDock.status.translateReplaceDone', {
+          language: result.targetLanguage ?? translationTargetLanguage,
+        }),
+      );
+    } catch (error: unknown) {
+      const text = error instanceof Error ? error.message : String(error);
+      setStatusNote(i18n.t('overlayDock.status.translateReplaceFailed', { detail: text }));
+    }
+  };
+
+  const handleLanguageChange = async (value: string): Promise<void> => {
+    setTranslationTargetLanguage(value);
+    try {
+      const currentSettings = settingsSnapshotRef.current ?? await getSettings();
+      const saved = await updateSettings({
+        ...currentSettings,
+        translationTargetLanguage: value,
+      });
+      settingsSnapshotRef.current = saved;
+      setTranslationTargetLanguage(saved.translationTargetLanguage);
+      setStatusNote(
+        i18n.t('overlayDock.status.languageChanged', {
+          language: saved.translationTargetLanguage,
+        }),
+      );
+    } catch (error: unknown) {
+      const text = error instanceof Error ? error.message : String(error);
+      setStatusNote(i18n.t('overlayDock.status.languageFailed', { detail: text }));
+    }
+  };
+
   const handlePauseTimer = async (timer: VoiceTimer): Promise<void> => {
     try {
       await voiceTimers.pauseTimer(timer.id);
@@ -744,16 +927,7 @@ export default function OverlayDock() {
           >
             {showIcons ? (
               <span className="edge-nav-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polygon points="7 5 19 12 7 19 7 5" />
-                </svg>
+                <Play />
               </span>
             ) : null}
             {showLabels ? (
@@ -780,22 +954,137 @@ export default function OverlayDock() {
           >
             {showIcons ? (
               <span className="edge-nav-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
+                <MessageCircle />
               </span>
             ) : null}
             {showLabels ? (
               <span className="edge-nav-label">{i18n.t('overlayDock.chat')}</span>
             ) : null}
           </button>
+
+          <button
+            type="button"
+            className="edge-nav-btn"
+            data-display-mode={actionBarDisplayMode}
+            aria-label={i18n.t('overlayDock.dictatePaste')}
+            title={`${i18n.t('overlayDock.dictatePaste')} (${dictationAcceleratorForMode('paste')})`}
+            onPointerDown={(event) => startDictationFromButton('paste', event)}
+            onPointerUp={(event) => stopDictationFromButton('paste', event)}
+            onPointerCancel={(event) => stopDictationFromButton('paste', event)}
+            onMouseEnter={handleNonTimerActionHover}
+            onFocus={handleNonTimerActionHover}
+          >
+            {showIcons ? (
+              <span className="edge-nav-icon" aria-hidden="true">
+                <Mic />
+              </span>
+            ) : null}
+            {showLabels ? (
+              <span className="edge-nav-label">{i18n.t('overlayDock.dictatePasteShort')}</span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            className="edge-nav-btn"
+            data-display-mode={actionBarDisplayMode}
+            aria-label={i18n.t('overlayDock.dictateClipboard')}
+            title={`${i18n.t('overlayDock.dictateClipboard')} (${dictationAcceleratorForMode('clipboard')})`}
+            onPointerDown={(event) => startDictationFromButton('clipboard', event)}
+            onPointerUp={(event) => stopDictationFromButton('clipboard', event)}
+            onPointerCancel={(event) => stopDictationFromButton('clipboard', event)}
+            onMouseEnter={handleNonTimerActionHover}
+            onFocus={handleNonTimerActionHover}
+          >
+            {showIcons ? (
+              <span className="edge-nav-icon" aria-hidden="true">
+                <ClipboardCheck />
+              </span>
+            ) : null}
+            {showLabels ? (
+              <span className="edge-nav-label">{i18n.t('overlayDock.dictateClipboardShort')}</span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            className="edge-nav-btn"
+            data-display-mode={actionBarDisplayMode}
+            aria-label={i18n.t('overlayDock.compactSelection')}
+            title={`${i18n.t('overlayDock.compactSelection')} (Ctrl+Shift+1)`}
+            onPointerDown={() => armAction('compact')}
+            onMouseEnter={handleNonTimerActionHover}
+            onFocus={handleNonTimerActionHover}
+            onPointerLeave={clearArmedAction}
+            onPointerUp={() => handleArmedAction('compact', handleCompactSelection)}
+            onClick={(event) => {
+              if (event.detail === 0) {
+                void handleCompactSelection();
+              }
+            }}
+          >
+            {showIcons ? (
+              <span className="edge-nav-icon" aria-hidden="true">
+                <Minimize2 />
+              </span>
+            ) : null}
+            {showLabels ? (
+              <span className="edge-nav-label">{i18n.t('overlayDock.compact')}</span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            className="edge-nav-btn"
+            data-display-mode={actionBarDisplayMode}
+            aria-label={i18n.t('overlayDock.translateReplace')}
+            title={i18n.t('overlayDock.translateReplace')}
+            onPointerDown={() => armAction('translate-replace')}
+            onMouseEnter={handleNonTimerActionHover}
+            onFocus={handleNonTimerActionHover}
+            onPointerLeave={clearArmedAction}
+            onPointerUp={() => handleArmedAction('translate-replace', handleTranslateSelectionReplace)}
+            onClick={(event) => {
+              if (event.detail === 0) {
+                void handleTranslateSelectionReplace();
+              }
+            }}
+          >
+            {showIcons ? (
+              <span className="edge-nav-icon" aria-hidden="true">
+                <Languages />
+              </span>
+            ) : null}
+            {showLabels ? (
+              <span className="edge-nav-label">{i18n.t('overlayDock.translate')}</span>
+            ) : null}
+          </button>
+
+          <label className="edge-nav-language" title={i18n.t('overlayDock.language')}>
+            {showLabels ? (
+              <span className="edge-nav-language-label">{i18n.t('overlayDock.language')}</span>
+            ) : null}
+            <select
+              className="edge-nav-language-select"
+              aria-label={i18n.t('overlayDock.language')}
+              value={translationTargetLanguage}
+              onMouseEnter={handleNonTimerActionHover}
+              onFocus={handleNonTimerActionHover}
+              onChange={(event) => void handleLanguageChange(event.target.value)}
+            >
+              {languageOptions.length ? (
+                languageOptions.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {showLabels ? option.label : option.code.toUpperCase()}
+                  </option>
+                ))
+              ) : (
+                <option value={translationTargetLanguage}>
+                  {translationTargetLanguage.toUpperCase()}
+                </option>
+              )}
+            </select>
+          </label>
 
           <button
             type="button"
@@ -826,19 +1115,7 @@ export default function OverlayDock() {
           >
             {showIcons ? (
               <span className="edge-nav-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="13" r="8" />
-                  <path d="M12 13V9" />
-                  <path d="M15 5H9" />
-                  <path d="M12 13l3 2" />
-                </svg>
+                <Timer />
               </span>
             ) : null}
             {showLabels ? (
@@ -873,17 +1150,7 @@ export default function OverlayDock() {
           >
             {showIcons ? (
               <span className="edge-nav-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.82-.34 1.7 1.7 0 0 0-1 1.52V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.52 1.7 1.7 0 0 0-1.82.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.82 1.7 1.7 0 0 0-1.52-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.52-1 1.7 1.7 0 0 0-.34-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.82.34h.01a1.7 1.7 0 0 0 .99-1.52V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 .99 1.52h.01a1.7 1.7 0 0 0 1.82-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.82v.01a1.7 1.7 0 0 0 1.52.99H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.52.99z" />
-                </svg>
+                <Settings />
               </span>
             ) : null}
             {showLabels ? (

@@ -2,11 +2,11 @@ use crate::{
     settings::{resolve_openai_api_key, SettingsState},
     voice_memory::{recall_voice_memory, RecallVoiceMemoryRequest},
     voice_profile::{build_assistant_instructions, build_voice_agent_state},
-    voice_timers::{
-        format_duration_label, format_remaining_label, timer_candidates_to_json,
-        timer_to_json, TimerResolveResult, VoiceTimer, VoiceTimerState,
-    },
     voice_tasks::VoiceTaskState,
+    voice_timers::{
+        format_duration_label, format_remaining_label, timer_candidates_to_json, timer_to_json,
+        TimerResolveResult, VoiceTimer, VoiceTimerState,
+    },
 };
 use chrono::{Local, Offset, Utc};
 use serde_json::{json, Value};
@@ -945,8 +945,8 @@ fn parse_optional_timer_duration_ms(args: &Value) -> Result<Option<u64>, String>
         return Ok(Some(duration_ms.min(24 * 60 * 60 * 1000)));
     }
 
-    let total_seconds = duration_minutes.unwrap_or(0).saturating_mul(60)
-        + duration_seconds.unwrap_or(0);
+    let total_seconds =
+        duration_minutes.unwrap_or(0).saturating_mul(60) + duration_seconds.unwrap_or(0);
     if total_seconds == 0 {
         return Err("The timer duration must be at least one second.".to_string());
     }
@@ -954,7 +954,10 @@ fn parse_optional_timer_duration_ms(args: &Value) -> Result<Option<u64>, String>
     Ok(Some(total_seconds.saturating_mul(1000)))
 }
 
-fn resolve_timer_from_args(args: &Value, app: &AppHandle) -> Result<Option<crate::voice_timers::VoiceTimer>, String> {
+fn resolve_timer_from_args(
+    args: &Value,
+    app: &AppHandle,
+) -> Result<Option<crate::voice_timers::VoiceTimer>, String> {
     let state = app.state::<VoiceTimerState>();
     match state.resolve_timer(
         args.get("timerId").and_then(Value::as_str),
@@ -3124,8 +3127,14 @@ mod tests {
 
         let sources = extract_web_search_sources(&payload);
         assert_eq!(sources.len(), 2);
-        assert_eq!(sources[0].get("url").and_then(serde_json::Value::as_str), Some("https://example.com/extra"));
-        assert_eq!(sources[1].get("url").and_then(serde_json::Value::as_str), Some("https://example.com/main"));
+        assert_eq!(
+            sources[0].get("url").and_then(serde_json::Value::as_str),
+            Some("https://example.com/extra")
+        );
+        assert_eq!(
+            sources[1].get("url").and_then(serde_json::Value::as_str),
+            Some("https://example.com/main")
+        );
     }
 
     #[test]
