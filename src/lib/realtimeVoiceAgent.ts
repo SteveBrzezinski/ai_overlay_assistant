@@ -4,7 +4,9 @@ import {
   onVoiceAgentTask,
   runVoiceAgentTool,
   storeVoiceSessionMemory,
+  takeContextBucketItems,
   type CreateVoiceAgentSessionResult,
+  type ContextBucketItem,
   type RecentVoiceMemoryResult,
   type VoiceTask,
 } from './voiceOverlay.js';
@@ -22,6 +24,29 @@ import {
 const FALLBACK_SESSION_DURATION_MS = 60 * 60 * 1000;
 const SESSION_ROTATION_BUFFER_MS = 2 * 60 * 1000;
 const MIN_SESSION_ROTATION_DELAY_MS = 30 * 1000;
+
+function formatContextBucketForTurn(items: ContextBucketItem[], source: 'voice' | 'chat'): string {
+  const sections = items
+    .map((item, index) => {
+      const capturedAt = item.capturedAtMs
+        ? new Date(item.capturedAtMs).toISOString()
+        : 'unknown time';
+      return [
+        `Context item ${index + 1} (${item.charCount} characters, captured ${capturedAt}):`,
+        item.text,
+      ].join('\n');
+    })
+    .join('\n\n---\n\n');
+
+  return [
+    `Selected context bucket attached to this ${source} request.`,
+    'Use this only as background context for the current user request.',
+    'Do not mention the bucket unless the user asks where the context came from.',
+    'The local bucket has already been cleared after attaching this content.',
+    '',
+    sections,
+  ].join('\n');
+}
 
 export type VoiceFeedSection = 'events' | 'tasks';
 export type VoiceFeedKind = 'client' | 'server' | 'lifecycle' | 'task' | 'error';
@@ -112,6 +137,7 @@ export class RealtimeVoiceAgentController {
   private audioElementCleanup: (() => void) | null = null;
   private pendingGracefulDeactivateReason: string | null = null;
   private latestObservedUserTurn = '';
+  private contextBucketInjectionPromise: Promise<void> | null = null;
 
   constructor(callbacks: RealtimeVoiceAgentCallbacks) {
     this.callbacks = callbacks;
@@ -249,6 +275,8 @@ export class RealtimeVoiceAgentController {
       await this.recoverSession(`chat-${messageId}`, false);
     }
 
+    await this.injectContextBucketForNextTurn('chat');
+
     this.sendRealtimeEvent({
       type: 'conversation.item.create',
       item: {
@@ -353,6 +381,17 @@ export class RealtimeVoiceAgentController {
   observeExternalUserTranscript(transcript: string): void {
     this.latestObservedUserTurn = transcript.trim();
     this.memoryTracker.rememberExternalUserTranscript(transcript);
+  }
+
+  notifyContextBucketAvailable(count: number): void {
+    if (count <= 0 || !this.isTransportReady()) {
+      return;
+    }
+
+    this.announceSystemEvent(
+      `Selected context bucket currently contains ${count} item(s). Do not respond to this notice. The full content will be attached silently to the next voice or chat request, then cleared.`,
+      false,
+    );
   }
 
   setExternalAudioOutputSuppression(active: boolean, reason = 'local-audio-output'): void {
@@ -496,6 +535,13 @@ export class RealtimeVoiceAgentController {
     this.log('events', 'server', `server -> ${firstString(event.type, 'unknown')}`, event);
     this.memoryTracker.captureMemoryFromEvent(event);
     const responseContext = this.captureResponseContext(event);
+
+    if (
+      event.type === 'input_audio_buffer.speech_started' ||
+      event.type === 'conversation.item.input_audio_transcription.completed'
+    ) {
+      await this.injectContextBucketForNextTurn('voice');
+    }
 
     if (event.type === 'session.created' || event.type === 'session.updated') {
       this.captureSessionLifetime(event);
@@ -778,6 +824,48 @@ export class RealtimeVoiceAgentController {
       }
     } catch (error) {
       this.log('events', 'error', 'system event dispatch failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async injectContextBucketForNextTurn(source: 'voice' | 'chat'): Promise<void> {
+    if (this.contextBucketInjectionPromise) {
+      await this.contextBucketInjectionPromise;
+      return;
+    }
+
+    this.contextBucketInjectionPromise = (async () => {
+      let result;
+      try {
+        result = await takeContextBucketItems();
+      } catch (error) {
+        this.log(
+          'tasks',
+          'error',
+          'context bucket read failed',
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
+
+      if (!result.items.length) {
+        return;
+      }
+
+      this.log('tasks', 'task', 'context bucket attached', {
+        source,
+        count: result.count,
+        totalChars: result.totalChars,
+      });
+      this.memoryTracker.rememberTaskEvent(
+        `Selected context bucket attached to ${source} request: ${result.count} item(s), ${result.totalChars} character(s).`,
+      );
+      this.announceSystemEvent(formatContextBucketForTurn(result.items, source), false);
+    })();
+
+    try {
+      await this.contextBucketInjectionPromise;
+    } finally {
+      this.contextBucketInjectionPromise = null;
     }
   }
 

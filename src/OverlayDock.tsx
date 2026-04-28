@@ -14,6 +14,7 @@ import {
   primaryMonitor,
 } from '@tauri-apps/api/window';
 import {
+  Archive,
   ClipboardCheck,
   Languages,
   MessageCircle,
@@ -22,16 +23,21 @@ import {
   Play,
   Settings,
   Timer,
+  Trash2,
 } from 'lucide-react';
 import {
   compactSelectedText,
+  captureContextBucketItem,
+  clearContextBucket,
   emitDictationHotkey,
   getAssistantState,
   getChatWindowVisibility,
+  getContextBucketStatus,
   getHotkeyStatus,
   getLanguageOptions,
   getMainWindowVisibility,
   getSettings,
+  onContextBucketUpdated,
   onHotkeyStatus,
   onDictationNotification,
   onAssistantStateChange,
@@ -67,9 +73,9 @@ const BOTTOM_INSET = 10;
 const WINDOW_PADDING = { top: 8, right: 6, bottom: 8 };
 const COLLAPSED_LAYOUT = { width: 22, height: 84 };
 const EXPANDED_LAYOUTS = {
-  'icons-only': { width: 470, height: 84 },
-  'text-only': { width: 760, height: 84 },
-  'icons-and-text': { width: 900, height: 84 },
+  'icons-only': { width: 560, height: 84 },
+  'text-only': { width: 930, height: 84 },
+  'icons-and-text': { width: 1110, height: 84 },
 } as const;
 const TIMER_FLYOUT_HEIGHT = 286;
 const TIMER_DIALOG_LAYOUT = { minWidth: 620, height: 760 };
@@ -204,6 +210,8 @@ export default function OverlayDock() {
   );
   const [translationTargetLanguage, setTranslationTargetLanguage] = useState('en');
   const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>([]);
+  const [contextBucketCount, setContextBucketCount] = useState(0);
+  const [contextBucketTotalChars, setContextBucketTotalChars] = useState(0);
   const [pendingSpeakActive, setPendingSpeakActive] = useState<boolean | null>(null);
   const [dictationPulseState, setDictationPulseState] =
     useState<DictationPulseState>(null);
@@ -256,6 +264,7 @@ export default function OverlayDock() {
     let unlistenMainWindowVisibility: (() => void | Promise<void>) | undefined;
     let unlistenDictationNotification: (() => void | Promise<void>) | undefined;
     let unlistenHotkeyStatus: (() => void | Promise<void>) | undefined;
+    let unlistenContextBucket: (() => void | Promise<void>) | undefined;
     let unlistenSettings: (() => void | Promise<void>) | undefined;
     let unlistenScale: (() => void | Promise<void>) | undefined;
 
@@ -311,6 +320,16 @@ export default function OverlayDock() {
       })
       .catch(() => {
         setLanguageOptions([]);
+      });
+
+    void getContextBucketStatus()
+      .then((status) => {
+        setContextBucketCount(status.count);
+        setContextBucketTotalChars(status.totalChars);
+      })
+      .catch(() => {
+        setContextBucketCount(0);
+        setContextBucketTotalChars(0);
       });
 
     void onAssistantStateChange(({ active }) => {
@@ -385,6 +404,13 @@ export default function OverlayDock() {
       unlistenHotkeyStatus = cleanup;
     });
 
+    void onContextBucketUpdated((status) => {
+      setContextBucketCount(status.count);
+      setContextBucketTotalChars(status.totalChars);
+    }).then((cleanup) => {
+      unlistenContextBucket = cleanup;
+    });
+
     void onSettingsUpdated((settings) => {
       settingsSnapshotRef.current = settings;
       setActionBarDisplayMode(settings.actionBarDisplayMode ?? 'icons-only');
@@ -440,6 +466,7 @@ export default function OverlayDock() {
       void unlistenMainWindowVisibility?.();
       void unlistenDictationNotification?.();
       void unlistenHotkeyStatus?.();
+      void unlistenContextBucket?.();
       void unlistenSettings?.();
       void unlistenScale?.();
     };
@@ -621,6 +648,18 @@ export default function OverlayDock() {
     void run();
   };
 
+  const flashActionPulse = (state: Exclude<DictationPulseState, null>): void => {
+    if (dictationPulseTimerRef.current !== null) {
+      window.clearTimeout(dictationPulseTimerRef.current);
+      dictationPulseTimerRef.current = null;
+    }
+    setDictationPulseState(state);
+    dictationPulseTimerRef.current = window.setTimeout(() => {
+      dictationPulseTimerRef.current = null;
+      setDictationPulseState(null);
+    }, state === 'error' ? 2600 : 1900);
+  };
+
   const handleSpeak = async (): Promise<void> => {
     setIsExpanded(true);
     try {
@@ -768,6 +807,41 @@ export default function OverlayDock() {
     } catch (error: unknown) {
       const text = error instanceof Error ? error.message : String(error);
       setStatusNote(i18n.t('overlayDock.status.translateReplaceFailed', { detail: text }));
+    }
+  };
+
+  const handleCaptureContext = async (): Promise<void> => {
+    setIsExpanded(true);
+    try {
+      const status = await captureContextBucketItem();
+      setContextBucketCount(status.count);
+      setContextBucketTotalChars(status.totalChars);
+      flashActionPulse('success');
+      setStatusNote(
+        i18n.t('overlayDock.status.contextAdded', {
+          count: status.count,
+          chars: status.totalChars,
+        }),
+      );
+    } catch (error: unknown) {
+      const text = error instanceof Error ? error.message : String(error);
+      flashActionPulse('error');
+      setStatusNote(i18n.t('overlayDock.status.contextAddFailed', { detail: text }));
+    }
+  };
+
+  const handleClearContext = async (): Promise<void> => {
+    setIsExpanded(true);
+    try {
+      const status = await clearContextBucket();
+      setContextBucketCount(status.count);
+      setContextBucketTotalChars(status.totalChars);
+      flashActionPulse('success');
+      setStatusNote(i18n.t('overlayDock.status.contextCleared'));
+    } catch (error: unknown) {
+      const text = error instanceof Error ? error.message : String(error);
+      flashActionPulse('error');
+      setStatusNote(i18n.t('overlayDock.status.contextClearFailed', { detail: text }));
     }
   };
 
@@ -959,6 +1033,72 @@ export default function OverlayDock() {
             ) : null}
             {showLabels ? (
               <span className="edge-nav-label">{i18n.t('overlayDock.chat')}</span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            className={`edge-nav-btn ${contextBucketCount > 0 ? 'edge-nav-btn--active' : ''}`}
+            data-display-mode={actionBarDisplayMode}
+            aria-label={i18n.t('overlayDock.contextAdd')}
+            title={i18n.t('overlayDock.contextAddTitle', {
+              count: contextBucketCount,
+              chars: contextBucketTotalChars,
+            })}
+            onPointerDown={() => armAction('context-add')}
+            onMouseEnter={handleNonTimerActionHover}
+            onFocus={handleNonTimerActionHover}
+            onPointerLeave={clearArmedAction}
+            onPointerUp={() => handleArmedAction('context-add', handleCaptureContext)}
+            onClick={(event) => {
+              if (event.detail === 0) {
+                void handleCaptureContext();
+              }
+            }}
+          >
+            {showIcons ? (
+              <span className="edge-nav-icon edge-nav-icon--badged" aria-hidden="true">
+                <Archive />
+                {contextBucketCount > 0 ? (
+                  <span className="edge-nav-badge">
+                    {contextBucketCount > 99 ? '99+' : contextBucketCount}
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+            {showLabels ? (
+              <span className="edge-nav-label">{i18n.t('overlayDock.contextAddShort')}</span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            className="edge-nav-btn"
+            data-display-mode={actionBarDisplayMode}
+            aria-label={i18n.t('overlayDock.contextClear')}
+            title={i18n.t('overlayDock.contextClearTitle', {
+              count: contextBucketCount,
+              chars: contextBucketTotalChars,
+            })}
+            disabled={contextBucketCount === 0}
+            onPointerDown={() => armAction('context-clear')}
+            onMouseEnter={handleNonTimerActionHover}
+            onFocus={handleNonTimerActionHover}
+            onPointerLeave={clearArmedAction}
+            onPointerUp={() => handleArmedAction('context-clear', handleClearContext)}
+            onClick={(event) => {
+              if (event.detail === 0) {
+                void handleClearContext();
+              }
+            }}
+          >
+            {showIcons ? (
+              <span className="edge-nav-icon" aria-hidden="true">
+                <Trash2 />
+              </span>
+            ) : null}
+            {showLabels ? (
+              <span className="edge-nav-label">{i18n.t('overlayDock.contextClearShort')}</span>
             ) : null}
           </button>
 

@@ -2,8 +2,8 @@
 
 use tauri::Manager;
 use voice_overlay_assistant::{
-    app_icon, audio_output, background, hotkey, run_controller, settings, timer_audio, voice_tasks,
-    voice_timers,
+    app_icon, audio_output, background, context_bucket, hotkey, run_controller, settings,
+    timer_audio, voice_tasks, voice_timers,
 };
 
 #[tauri::command]
@@ -18,6 +18,7 @@ fn main() {
     tauri::Builder::default()
         .manage(background::AppLifecycleState::default())
         .manage(background::AssistantState::default())
+        .manage(context_bucket::ContextBucketState::default())
         .manage(hotkey::HotkeyState::default())
         .manage(audio_output::AudioOutputActivityState::default())
         .manage(run_controller::RunController::default())
@@ -56,6 +57,10 @@ fn main() {
             voice_overlay_assistant::capture_and_translate_command,
             voice_overlay_assistant::compact_selected_text_command,
             voice_overlay_assistant::translate_selected_text_replace_command,
+            voice_overlay_assistant::capture_context_bucket_item_command,
+            voice_overlay_assistant::get_context_bucket_status_command,
+            voice_overlay_assistant::clear_context_bucket_command,
+            voice_overlay_assistant::take_context_bucket_items_command,
             voice_overlay_assistant::get_settings,
             voice_overlay_assistant::update_settings,
             voice_overlay_assistant::reset_settings,

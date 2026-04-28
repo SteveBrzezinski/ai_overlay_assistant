@@ -473,6 +473,26 @@ export type SelectedTextActionResult = {
   elapsedMs: number;
 };
 
+export type ContextBucketStatusPayload = {
+  count: number;
+  totalChars: number;
+  maxItems: number;
+  lastAction: string;
+};
+
+export type ContextBucketItem = {
+  id: string;
+  text: string;
+  capturedAtMs: number;
+  charCount: number;
+};
+
+export type ContextBucketTakeResult = {
+  items: ContextBucketItem[];
+  count: number;
+  totalChars: number;
+};
+
 export type DictationNotificationKind =
   | 'listening'
   | 'transcribing'
@@ -509,6 +529,7 @@ const VOICE_CHAT_STATE_EVENT = 'voice-chat-state';
 const VOICE_CHAT_SYNC_REQUEST_EVENT = 'voice-chat-sync-request';
 const VOICE_CHAT_SUBMIT_EVENT = 'voice-chat-submit';
 const APP_AUDIO_OUTPUT_EVENT = 'app-audio-output-state';
+const CONTEXT_BUCKET_EVENT = 'context-bucket-updated';
 
 export async function getAppStatus(): Promise<string> {
   return invoke<string>('app_status');
@@ -787,6 +808,30 @@ export async function emitDictationNotification(
       ...request,
       createdAtMs: request.createdAtMs ?? Date.now(),
     },
+  );
+}
+
+export async function captureContextBucketItem(): Promise<ContextBucketStatusPayload> {
+  return invoke<ContextBucketStatusPayload>('capture_context_bucket_item_command');
+}
+
+export async function getContextBucketStatus(): Promise<ContextBucketStatusPayload> {
+  return invoke<ContextBucketStatusPayload>('get_context_bucket_status_command');
+}
+
+export async function clearContextBucket(): Promise<ContextBucketStatusPayload> {
+  return invoke<ContextBucketStatusPayload>('clear_context_bucket_command');
+}
+
+export async function takeContextBucketItems(): Promise<ContextBucketTakeResult> {
+  return invoke<ContextBucketTakeResult>('take_context_bucket_items_command');
+}
+
+export async function onContextBucketUpdated(
+  callback: (status: ContextBucketStatusPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<ContextBucketStatusPayload>(CONTEXT_BUCKET_EVENT, (event) =>
+    callback(event.payload),
   );
 }
 

@@ -2,6 +2,7 @@ pub mod app_icon;
 pub mod audio_output;
 pub mod background;
 pub mod clipboard;
+pub mod context_bucket;
 pub mod dictation;
 pub mod hosted_backend;
 pub mod hotkey;
@@ -283,6 +284,10 @@ pub use commands::{
     capture_and_translate_command, capture_selected_text_command, get_language_options,
     get_settings, pause_resume_current_run, reset_settings, speak_text_command,
     transcribe_chat_audio_command, translate_text_command, update_settings,
+};
+pub use context_bucket::{
+    capture_context_bucket_item_command, clear_context_bucket_command,
+    get_context_bucket_status_command, take_context_bucket_items_command,
 };
 pub use dictation::{
     insert_dictation_text_command, report_dictation_error_command,

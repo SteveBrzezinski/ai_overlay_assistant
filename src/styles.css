@@ -2185,6 +2185,30 @@ body.overlay-body #root {
   display: block;
 }
 
+.edge-nav-icon--badged {
+  position: relative;
+}
+
+.edge-nav-badge {
+  position: absolute;
+  right: -8px;
+  top: -8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--edge-action-active-border);
+  border-radius: 999px;
+  background: var(--edge-action-active-text);
+  color: var(--overlay-shell);
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 12px var(--edge-action-active-glow);
+}
+
 .edge-nav-label {
   display: inline-flex;
   align-items: center;
@@ -2218,6 +2242,17 @@ body.overlay-body #root {
 
 .edge-nav-btn--active .edge-nav-label {
   text-shadow: none;
+}
+
+.edge-nav-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.edge-nav-btn:disabled:hover {
+  color: var(--text-secondary);
+  background: transparent;
+  box-shadow: none;
 }
 
 .edge-nav-panel[data-display-mode='icons-only'] .edge-nav-btn {
@@ -4267,6 +4302,15 @@ select:focus-visible {
   color: var(--edge-button-hover-text);
   border-color: transparent;
   background: var(--button-secondary-bg-hover);
+}
+
+.edge-nav-btn:disabled,
+.edge-nav-btn:disabled:hover {
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  opacity: 0.46;
 }
 
 .edge-nav-btn.edge-nav-btn--primary,

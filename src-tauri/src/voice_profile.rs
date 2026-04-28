@@ -189,6 +189,7 @@ pub fn build_assistant_instructions(settings: &AppSettings) -> String {
         "18. If you decide to say any closing or farewell at all, calling deactivate_voice_assistant in that same turn is mandatory. A spoken sign-off without the tool is a mistake.".to_string(),
         "19. If you are unsure whether the user is done, keep the conversation open. Do not say goodbye unless you truly intend to end the conversation now.".to_string(),
         "20. Keep responses concise, natural, and conversational by default.".to_string(),
+        "21. If a SYSTEM_EVENT says a selected context bucket exists, do not answer that notice. When a later SYSTEM_EVENT attaches selected context bucket contents, use that content only for the immediately following user request.".to_string(),
     ]
     .into_iter()
     .filter(|line| !line.trim().is_empty())

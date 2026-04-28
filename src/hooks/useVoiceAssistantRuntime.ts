@@ -5,6 +5,7 @@ import {
   emitVoiceChatState,
   onAppAudioOutputState,
   onAssistantControlRequest,
+  onContextBucketUpdated,
   onLiveSttControl,
   onVoiceTimerEvent,
   onVoiceChatSubmitRequest,
@@ -663,6 +664,7 @@ export function useVoiceAssistantRuntime(
 
   useEffect(() => {
     let unlistenAssistantControl: (() => void | Promise<void>) | undefined;
+    let unlistenContextBucket: (() => void | Promise<void>) | undefined;
 
     void onAssistantControlRequest((event) => {
       if (event.action === 'activate') {
@@ -679,8 +681,17 @@ export function useVoiceAssistantRuntime(
       unlistenAssistantControl = cleanup;
     });
 
+    void onContextBucketUpdated((status) => {
+      if (status.lastAction === 'added' && status.count > 0) {
+        realtimeVoiceAgentRef.current?.notifyContextBucketAvailable(status.count);
+      }
+    }).then((cleanup) => {
+      unlistenContextBucket = cleanup;
+    });
+
     return () => {
       void unlistenAssistantControl?.();
+      void unlistenContextBucket?.();
     };
   }, []);
 
